@@ -52,8 +52,13 @@ def get_gemini_models(api_key):
     except:
         return []
 
-st.title("🇯🇵 e-Stat AI データアナライザー (会話型絞り込み機能)")
-st.markdown("巨大な統計データも、まずはAIと会話して対象を小さく絞ってからグラフ化します。")
+st.title("📊 e-Stat AI Analyzer")
+st.markdown("""
+**政府統計の総合窓口「e-Stat」の巨大で複雑なデータを、誰もが簡単に可視化・分析できるエージェント型ツールです。**  
+1. **探す**: カテゴリとキーワードから目的の統計表を検索します。
+2. **絞る**: AI（Gemini）とチャットするだけで、複雑なデータ構造（地域・年齢など）をAIが自動解読して狙ったデータを抽出します。
+3. **描画・分析**: ノイズ（総数等）をワンタッチで除外し、美しいグラフとAIによる考察インサイトを一瞬で生成します。
+""")
 
 # --- Settings Sidebar ---
 with st.sidebar.expander("⚙️ API設定", expanded=True):
