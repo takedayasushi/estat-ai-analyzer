@@ -6,7 +6,7 @@ import re
 import google.generativeai as genai
 from src.api_estat import search_stats_list, get_meta_info, get_stats_data
 from src.data_processor import parse_estat_json_to_dataframe
-from src.api_llm import generate_insights, chat_for_filtering, extract_json_parameters
+from src.api_llm import generate_insights, chat_for_filtering, extract_json_parameters, generate_search_query, recommend_tables_from_list
 from streamlit_local_storage import LocalStorage
 
 st.set_page_config(page_title="e-Stat AI Analyzer", layout="wide")
@@ -154,8 +154,6 @@ with tab_ai:
             st.session_state['last_query'] = query_text
             with st.status("🤖 AIがデータの検索と吟味を行っています...", expanded=True) as status:
                 st.write("1. 🔍 あなたの質問から最適な検索条件を推論中...")
-                from src.api_llm import generate_search_query, recommend_tables_from_list
-                
                 cat_str = ", ".join([f"{k}" for k in ESTAT_CATEGORIES.keys()])
                 search_params = generate_search_query(
                     query_text, 
