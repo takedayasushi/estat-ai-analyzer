@@ -66,8 +66,16 @@ st.markdown("""
 
 # --- Settings Sidebar ---
 with st.sidebar.expander("⚙️ API設定", expanded=True):
-    saved_estat = localS.getItem("estat_app_id")
-    saved_gemini = localS.getItem("gemini_api_key")
+    saved_estat = None
+    saved_gemini = None
+    try:
+        saved_estat = localS.getItem("estat_app_id")
+    except Exception:
+        pass
+    try:
+        saved_gemini = localS.getItem("gemini_api_key")
+    except Exception:
+        pass
 
     if 'estat_app_id' not in st.session_state:
         st.session_state['estat_app_id'] = ""
