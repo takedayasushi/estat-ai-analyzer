@@ -16,6 +16,9 @@ from streamlit_local_storage import LocalStorage
 
 st.set_page_config(page_title="e-Stat AI Analyzer", layout="wide")
 localS = LocalStorage()
+# st_local_storageのバグ対策：初期化時にNoneになる問題を回避
+if localS.storedItems is None:
+    localS.storedItems = {}
 
 ESTAT_CATEGORIES = {
     "01: 国土・気象": "01",
