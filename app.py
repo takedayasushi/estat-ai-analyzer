@@ -134,7 +134,18 @@ with tab_manual:
 
 with tab_ai:
     st.markdown("### 🤖 データコンシェルジュに探してもらう")
-    ai_query = st.chat_input("どんなデータを探していますか？ 例: コロナ前後のリモートワークの推移")
+    
+    ai_query = None
+    # Streamlitの仕様上、画面最下部の入力欄(chat_input)は1つしか置けないため、絞り込みフェーズ(chat_mode)ではこちらを隠す
+    if st.session_state.get('chat_mode'):
+        st.warning("📌 **現在、選択した統計表の【絞り込み設定】を行っています。画面最下部のチャット欄は絞り込み指示用になっています。**\n\nもし別の統計データを一から探し直したい場合は、下のボタンを押してリセットしてください。")
+        if st.button("🔙 検索をやり直す（リセット）"):
+            for k in ['chat_mode', 'tables', 'ai_recommendations', 'ai_search_query', 'current_df', 'filter_params', 'selected_table_id_fixed']:
+                if k in st.session_state:
+                    del st.session_state[k]
+            st.rerun()
+    else:
+        ai_query = st.chat_input("どんなデータを探していますか？ 例: コロナ前後のリモートワークの推移", key="concierge_chat")
     
     if ai_query:
         if not api_key_ready or not app_id_ready:
