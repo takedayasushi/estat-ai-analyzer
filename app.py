@@ -1,3 +1,8 @@
+import sys
+# Streamlit Cloudの強力すぎるモジュールキャッシュを強制削除するハック（ImportError対策）
+if "src.api_llm" in sys.modules:
+    del sys.modules["src.api_llm"]
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
