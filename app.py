@@ -128,22 +128,23 @@ st.sidebar.divider()
 with st.sidebar.expander("📚 保存済み分析 / 共有ギャラリー"):
     # 全体ギャラリーの表示
     st.markdown("##### 🌍 全体ギャラリー")
+    st.info("💡 他のユーザーが共有した分析結果です。クリックすると**当時の検索条件を再現**し、e-Statから最新データを取得して表示します。")
+    st.caption("※サーバー再起動でリセットされます。また、復元後の追加の質問に対するAIの回答は、その都度新たに生成されるため結果が揺らぐ場合があります。")
     if not global_gallery:
         st.caption("現在、共有されている分析はありません。")
     else:
         for i, item in enumerate(reversed(global_gallery)):
             if st.button(f"🔗 {item['title']} ({item['timestamp']})", key=f"global_load_{i}"):
-                st.session_state['selected_table_id_fixed'] = item['table_id']
-                st.session_state['filter_params'] = item['filter_params']
-                st.session_state['insight_messages'] = item['insight_messages']
-                st.session_state['chat_mode'] = True
-                # メタデータなどは復元後に再取得が必要な場合があるが、まずはデータ取得フローへ
-                st.rerun()
+                if restore_saved_analysis(item):
+                    st.rerun()
+                else:
+                    st.error("復元に失敗しました。設定（APIキー等）を確認してください。")
                 
     st.markdown("---")
     # マイ・ブックマークの表示
     st.markdown("##### 🔖 マイ・ブックマーク")
-    st.caption("※お使いのブラウザに保存されたデータ")
+    st.info("💡 自分だけで閲覧できる保存データです。ブラウザのLocalStorageに保存されています。")
+    st.caption("※統計表の条件レシピのみを保存しているため、復元時にはe-Stat APIから最新の数値を再取得します。")
     try:
         saved_str = localS.getItem("estat_my_bookmarks")
         my_bookmarks = json.loads(saved_str) if saved_str else []
@@ -156,11 +157,10 @@ with st.sidebar.expander("📚 保存済み分析 / 共有ギャラリー"):
         for i, item in enumerate(reversed(my_bookmarks)):
             col_b, col_d = st.columns([4, 1])
             if col_b.button(f"📄 {item['title']}", key=f"local_load_{i}"):
-                st.session_state['selected_table_id_fixed'] = item['table_id']
-                st.session_state['filter_params'] = item['filter_params']
-                st.session_state['insight_messages'] = item['insight_messages']
-                st.session_state['chat_mode'] = True
-                st.rerun()
+                if restore_saved_analysis(item):
+                    st.rerun()
+                else:
+                    st.error("復元に失敗しました。設定（APIキー等）を確認してください。")
             if col_d.button("🗑️", key=f"local_del_{i}"):
                 my_bookmarks.pop(len(my_bookmarks) - 1 - i)
                 localS.setItem("estat_my_bookmarks", json.dumps(my_bookmarks, ensure_ascii=False), key=f"del_trigger_{i}")
@@ -216,6 +216,59 @@ def setup_analysis_phase(selected_table_id):
             return True
         except Exception as e:
             st.error(f"メタデータ取得エラー: {e}")
+            return False
+
+def restore_saved_analysis(item):
+    """保存されたデータから分析環境を完全に復元する"""
+    if not app_id_ready or not api_key_ready:
+        return False
+        
+    with st.status("🔄 保存時のレシピから分析環境を再現中...", expanded=True) as status:
+        try:
+            # 1. 基本変数の復旧
+            t_id = item['table_id']
+            f_params = item['filter_params']
+            st.session_state['selected_table_id_fixed'] = t_id
+            st.session_state['filter_params'] = f_params
+            st.session_state['insight_messages'] = item['insight_messages']
+            st.session_state['chat_mode'] = True
+            
+            # 検索ステートのクリア
+            for k in ['manual_tables', 'ai_recommendations', 'ai_search_query']:
+                if k in st.session_state: del st.session_state[k]
+                
+            # 2. メタデータの再取得（カラム情報等の復旧）
+            st.write("・e-Statから表の構造情報を取得しています...")
+            meta_json = get_meta_info(t_id, app_id=st.session_state['estat_app_id'])
+            class_objs = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('CLASS_INF', {}).get('CLASS_OBJ', [])
+            st.session_state['meta_summary'] = json.dumps(class_objs, ensure_ascii=False)
+            
+            if isinstance(class_objs, dict): class_objs = [class_objs]
+            col_details = []
+            for obj in class_objs:
+                col_name = obj.get('@name', obj.get('@id', 'Unknown'))
+                classes = obj.get('CLASS', [])
+                if isinstance(classes, dict): classes = [classes]
+                examples = [str(cls.get('@name', cls.get('@code', ''))) for cls in classes[:3]]
+                ex_str = "、".join(examples)
+                if len(classes) > 3: ex_str += " など"
+                col_details.append(f"・**{col_name}**{'（例: ' + ex_str + '）' if ex_str else ''}")
+            st.session_state['available_columns_details'] = col_details
+            
+            # 3. 実データの自動再取得（グラフの即時描画のため）
+            st.write("・保存時の条件でe-Stat APIから最新データを取得しています...")
+            raw_json = get_stats_data(t_id, app_id=st.session_state['estat_app_id'], filter_params=f_params)
+            df = parse_estat_json_to_dataframe(raw_json)
+            if df is not None and not df.empty:
+                st.session_state['current_df'] = df
+                st.write("✅ データの取得に成功しました。")
+            else:
+                st.write("⚠️ データの取得に失敗したか、0件でした。")
+                
+            status.update(label="✅ 再現完了！最新データでグラフと考察を復元しました。", state="complete")
+            return True
+        except Exception as e:
+            status.update(label=f"❌ 復元エラー: {e}", state="error")
             return False
 
 tab_ai, tab_manual = st.tabs(["🤖 AIにおまかせ検索", "📚 手動カテゴリ検索"])
