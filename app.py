@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import json
+import re
 import google.generativeai as genai
 from src.api_estat import search_stats_list, get_meta_info, get_stats_data
 from src.data_processor import parse_estat_json_to_dataframe
@@ -32,22 +33,19 @@ ESTAT_CATEGORIES = {
 }
 
 @st.cache_data(ttl=3600)
-def get_gemini_models(api_key):
+def fetch_gemini_models(api_key):
     if not api_key:
         return []
     try:
         genai.configure(api_key=api_key)
-        # Fetch available models supporting text generation, filtering out non-text/specialized models
         valid_models = []
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 name = m.name.replace("models/", "")
-                # 画像専用、埋め込み、音声などの非チャットモデルを除外
-                if any(x in name.lower() for x in ['embedding', 'aqa', 'vision', 'imagen', 'audio']):
-                    continue
-                # Geminiシリーズに限定
-                if 'gemini' in name.lower():
-                    valid_models.append(name)
+                # Geminiシリーズの中でも「pro」「flash」「ultra」「lite」を含む主幹推論（チャット）モデルのみを厳格に許可
+                if re.search(r'gemini(-[0-9.]+)?-(pro|flash|ultra|lite)', name.lower()):
+                    if 'vision' not in name.lower() and 'exp' not in name.lower():
+                        valid_models.append(name)
         return valid_models
     except:
         return []
@@ -85,7 +83,7 @@ with st.sidebar.expander("⚙️ API設定", expanded=True):
         st.session_state['estat_app_id'] = current_estat
         st.session_state['gemini_api_key'] = current_gemini
         # APIキーが変わったらモデル一覧を再取得するためにキャッシュクリア
-        get_gemini_models.clear()
+        fetch_gemini_models.clear()
         st.success("ブラウザ(LocalStorage)に安全に保存しました。")
 
 st.sidebar.header("検索設定")
@@ -93,7 +91,7 @@ selected_cat_name = st.sidebar.selectbox("検索カテゴリ（大分類）", li
 stats_field_code = ESTAT_CATEGORIES[selected_cat_name]
 search_keyword = st.sidebar.text_input("さらに絞り込むキーワード（任意）", value="", placeholder="例: 出生率, 女性など")
 
-available_models = get_gemini_models(st.session_state.get('gemini_api_key'))
+available_models = fetch_gemini_models(st.session_state.get('gemini_api_key'))
 if not available_models:
     llm_model = st.sidebar.selectbox("クラウドAIモデル", ["APIキーを設定して下さい"], disabled=True)
 else:
