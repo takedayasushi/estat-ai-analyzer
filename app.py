@@ -463,3 +463,5 @@ if st.session_state.get('current_df') is not None:
                     st.session_state['insight_messages'].append({"role": "assistant", "content": reply})
     else:
         st.info("データが空になる条件が選択されたか、valueカラムが存在しません。フィルタを見直してください。")
+
+# Trigger Streamlit Reload to fix module cache
