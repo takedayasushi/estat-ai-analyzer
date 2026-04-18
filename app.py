@@ -37,9 +37,18 @@ def get_gemini_models(api_key):
         return []
     try:
         genai.configure(api_key=api_key)
-        # Fetch available models supporting text generation
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        return [m.replace("models/", "") for m in models]
+        # Fetch available models supporting text generation, filtering out non-text/specialized models
+        valid_models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                name = m.name.replace("models/", "")
+                # 画像専用、埋め込み、音声などの非チャットモデルを除外
+                if any(x in name.lower() for x in ['embedding', 'aqa', 'vision', 'imagen', 'audio']):
+                    continue
+                # Geminiシリーズに限定
+                if 'gemini' in name.lower():
+                    valid_models.append(name)
+        return valid_models
     except:
         return []
 
