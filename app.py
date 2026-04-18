@@ -20,6 +20,13 @@ localS = LocalStorage()
 if localS.storedItems is None:
     localS.storedItems = {}
 
+@st.cache_resource
+def get_global_gallery():
+    """全ユーザーで共有されるインメモリのリスト"""
+    return []
+
+global_gallery = get_global_gallery()
+
 ESTAT_CATEGORIES = {
     "01: 国土・気象": "01",
     "02: 人口・世帯": "02",
@@ -115,6 +122,53 @@ else:
             break
     llm_model = st.sidebar.selectbox("クラウドAIモデル", available_models, index=default_index)
     st.session_state['llm_model'] = llm_model
+
+# --- Gallery & Bookmarks Sidebar ---
+st.sidebar.divider()
+with st.sidebar.expander("📚 保存済み分析 / 共有ギャラリー"):
+    # 全体ギャラリーの表示
+    st.markdown("##### 🌍 全体ギャラリー")
+    if not global_gallery:
+        st.caption("現在、共有されている分析はありません。")
+    else:
+        for i, item in enumerate(reversed(global_gallery)):
+            if st.button(f"🔗 {item['title']} ({item['timestamp']})", key=f"global_load_{i}"):
+                st.session_state['selected_table_id_fixed'] = item['table_id']
+                st.session_state['filter_params'] = item['filter_params']
+                st.session_state['insight_messages'] = item['insight_messages']
+                st.session_state['chat_mode'] = True
+                # メタデータなどは復元後に再取得が必要な場合があるが、まずはデータ取得フローへ
+                st.rerun()
+                
+    st.markdown("---")
+    # マイ・ブックマークの表示
+    st.markdown("##### 🔖 マイ・ブックマーク")
+    st.caption("※お使いのブラウザに保存されたデータ")
+    try:
+        saved_str = localS.getItem("estat_my_bookmarks")
+        my_bookmarks = json.loads(saved_str) if saved_str else []
+    except:
+        my_bookmarks = []
+        
+    if not my_bookmarks:
+        st.caption("保存済みの分析はありません。")
+    else:
+        for i, item in enumerate(reversed(my_bookmarks)):
+            col_b, col_d = st.columns([4, 1])
+            if col_b.button(f"📄 {item['title']}", key=f"local_load_{i}"):
+                st.session_state['selected_table_id_fixed'] = item['table_id']
+                st.session_state['filter_params'] = item['filter_params']
+                st.session_state['insight_messages'] = item['insight_messages']
+                st.session_state['chat_mode'] = True
+                st.rerun()
+            if col_d.button("🗑️", key=f"local_del_{i}"):
+                my_bookmarks.pop(len(my_bookmarks) - 1 - i)
+                localS.setItem("estat_my_bookmarks", json.dumps(my_bookmarks, ensure_ascii=False), key=f"del_trigger_{i}")
+                st.rerun()
+    
+    if st.button("🗑️ ブックマークを全消去"):
+        localS.setItem("estat_my_bookmarks", "[]", key="clear_all_bookmarks")
+        st.rerun()
 
 app_id_ready = bool(st.session_state.get('estat_app_id'))
 api_key_ready = bool(st.session_state.get('gemini_api_key'))
@@ -473,6 +527,58 @@ if st.session_state.get('current_df') is not None:
                     st.session_state['insight_messages'].append({"role": "assistant", "content": reply})
                     st.rerun() # 最新の回答を履歴ループに反映させるために再描画
                     
+        # --- 保存と共有のエリア ---
+        st.divider()
+        st.subheader("💾 分析の保存と共有")
+        
+        save_col1, save_col2 = st.columns(2)
+        
+        with save_col1:
+            st.markdown("##### 🔖 マイ・ブックマーク")
+            st.caption("お使いのブラウザ（LocalStorage）に保存されます。自分だけが閲覧可能です。")
+            local_title = st.text_input("保存名", placeholder="例: 2023年人口推移の考察", key="local_save_title")
+            if st.button("ブラウザに保存する", use_container_width=True):
+                if not local_title:
+                    st.error("保存名を入力してください。")
+                else:
+                    # 現在の状態をパッケージング
+                    new_item = {
+                        "title": local_title,
+                        "table_id": st.session_state['selected_table_id_fixed'],
+                        "filter_params": st.session_state['filter_params'],
+                        "insight_messages": st.session_state['insight_messages'],
+                        "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+                    }
+                    # 既存のリストを取得して追加
+                    try:
+                        saved_str = localS.getItem("estat_my_bookmarks")
+                        saved_list = json.loads(saved_str) if saved_str else []
+                    except:
+                        saved_list = []
+                    
+                    saved_list.append(new_item)
+                    localS.setItem("estat_my_bookmarks", json.dumps(saved_list, ensure_ascii=False), key="save_bookmark_trigger")
+                    st.success(f"『{local_title}』をブラウザに保存しました！")
+
+        with save_col2:
+            st.markdown("##### 🌍 全体ギャラリー")
+            st.caption("このアプリを使っている全員に公開されます。※サーバー再起動でリセットされます。")
+            global_title = st.text_input("公開名", placeholder="例: 面白い統計を発見！", key="global_save_title")
+            if st.button("全体に公開する", use_container_width=True):
+                if not global_title:
+                    st.error("公開名を入力してください。")
+                else:
+                    shared_item = {
+                        "title": global_title,
+                        "table_id": st.session_state['selected_table_id_fixed'],
+                        "filter_params": st.session_state['filter_params'],
+                        "insight_messages": st.session_state['insight_messages'],
+                        "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+                        "creator": "匿名ユーザー"
+                    }
+                    global_gallery.append(shared_item)
+                    st.success(f"『{global_title}』を全体ギャラリーに公開しました！")
+
         # 分析・考察用の入力フォームを最下部に配置
         with st.form("insight_form", clear_on_submit=True):
             col1, col2 = st.columns([5, 1])
