@@ -162,6 +162,12 @@ def restore_saved_analysis(item):
             else:
                 st.write("⚠️ データの取得に失敗したか、0件でした。")
                 
+            # 4. 追加：グラフ設定とフィルタの復元
+            if 'chart_config' in item:
+                st.session_state['chart_config'] = item['chart_config']
+            if 'dimension_filters' in item:
+                st.session_state['dimension_filters'] = item['dimension_filters']
+
             status.update(label="✅ 再現完了！最新データでグラフと考察を復元しました。", state="complete")
             return True
         except Exception as e:
@@ -215,8 +221,11 @@ else:
 
 # --- Gallery & Bookmarks Sidebar ---
 st.sidebar.divider()
-with st.sidebar.expander("📚 保存済み分析 / 共有ギャラリー"):
-    st.markdown("##### 🌍 全体ギャラリー")
+
+# 管理者モードのチェック (?admin=true)
+is_admin = st.query_params.get("admin") == "true"
+
+with st.sidebar.expander("🌍 全体ギャラリー", expanded=False):
     st.caption("※サーバー再起動でリセットされます。復元時はAPIで再取得するため最新の状態が反映されます。")
     if not global_gallery:
         st.caption("現在、共有されている分析はありません。")
@@ -227,12 +236,15 @@ with st.sidebar.expander("📚 保存済み分析 / 共有ギャラリー"):
                     st.rerun()
                 else:
                     st.error("復元に失敗しました。")
-    if st.button("🚨 全体ギャラリーを全削除"):
-        global_gallery.clear()
-        st.rerun()
+    
+    # 管理者専用の削除ボタン (URLに ?admin=true がある時のみ表示)
+    if is_admin:
+        st.markdown("---")
+        if st.button("🚨 全体ギャラリーを全削除 (管理者)", key="admin_clear_gallery"):
+            global_gallery.clear()
+            st.rerun()
                 
-    st.markdown("---")
-    st.markdown("##### 🔖 マイ・ブックマーク")
+with st.sidebar.expander("🔖 マイ・ブックマーク", expanded=False):
     st.caption("※お使いのブラウザに保存された条件レシピです。")
     try:
         saved_str = localS.getItem("estat_my_bookmarks")
@@ -252,6 +264,10 @@ with st.sidebar.expander("📚 保存済み分析 / 共有ギャラリー"):
                 my_bookmarks.pop(len(my_bookmarks) - 1 - i)
                 localS.setItem("estat_my_bookmarks", json.dumps(my_bookmarks, ensure_ascii=False), key=f"del_{i}")
                 st.rerun()
+    
+    if st.button("🗑️ ブックマークを全消去", key="clear_all_bookmarks"):
+        localS.setItem("estat_my_bookmarks", "[]", key="clear_all_bookmarks_trigger")
+        st.rerun()
 
 # --- Main Tabs ---
 st.divider()
@@ -375,7 +391,14 @@ if st.session_state.get('current_df') is not None:
         cols = st.columns(min(len(dims), 4))
         for i, d in enumerate(dims):
             uvs = [v for v in df_base[d].dropna().unique() if v != '']
-            defaults = [v for v in uvs if not any(k in str(v) for k in ['総数', '計', '不詳'])]
+            
+            # 復元されたフィルタ値がある場合はそれを優先、なければデフォルト（総数以外）
+            saved_filters = st.session_state.get('dimension_filters', {}).get(d)
+            if saved_filters:
+                defaults = [v for v in uvs if v in saved_filters]
+            else:
+                defaults = [v for v in uvs if not any(k in str(v) for k in ['総数', '計', '不詳'])]
+            
             filters[d] = cols[i%4].multiselect(d, uvs, default=defaults or uvs)
     
     df_f = df_base.copy()
@@ -385,9 +408,23 @@ if st.session_state.get('current_df') is not None:
     if not df_f.empty:
         st.dataframe(df_f.head())
         col_c1, col_c2, col_c3 = st.columns(3)
-        ct = col_c1.selectbox("グラフ", ["折れ線", "棒", "円"])
-        xa = col_c2.selectbox("X軸", dims)
-        cc = col_c3.selectbox("色分け", ["なし"] + [d for d in dims if d != xa])
+        
+        # グラフ種類の初期値
+        chart_type_options = ["折れ線", "棒", "円"]
+        saved_ct = st.session_state.get('chart_config', {}).get('chart_type')
+        ct_idx = chart_type_options.index(saved_ct) if saved_ct in chart_type_options else 0
+        ct = col_c1.selectbox("グラフ", chart_type_options, index=ct_idx)
+        
+        # X軸の初期値
+        saved_xa = st.session_state.get('chart_config', {}).get('x_axis')
+        xa_idx = dims.index(saved_xa) if saved_xa in dims else 0
+        xa = col_c2.selectbox("X軸", dims, index=xa_idx)
+        
+        # 色分けの初期値
+        cc_options = ["なし"] + [d for d in dims if d != xa]
+        saved_cc = st.session_state.get('chart_config', {}).get('color_col')
+        cc_idx = cc_options.index(saved_cc) if saved_cc in cc_options else 0
+        cc = col_c3.selectbox("色分け", cc_options, index=cc_idx)
         
         fig = None
         if ct == "折れ線": fig = px.line(df_f, x=xa, y='value', color=cc if cc != "なし" else None, markers=True)
@@ -422,10 +459,26 @@ if st.session_state.get('current_df') is not None:
         st.divider()
         st.subheader("💾 保存・公開")
         c_s1, c_s2 = st.columns(2)
+        
+        # 保存時点で現在の設定をパッケージング
+        chart_config = {
+            "chart_type": ct,
+            "x_axis": xa,
+            "color_col": cc
+        }
+        
         with c_s1:
             t_s = st.text_input("保存名", key="local_title")
             if st.button("ブラウザに保存"):
-                item = {"title": t_s, "table_id": st.session_state['selected_table_id_fixed'], "filter_params": st.session_state['filter_params'], "insight_messages": st.session_state['insight_messages'], "timestamp": pd.Timestamp.now().strftime("%m/%d %H:%M")}
+                item = {
+                    "title": t_s,
+                    "table_id": st.session_state['selected_table_id_fixed'],
+                    "filter_params": st.session_state['filter_params'],
+                    "insight_messages": st.session_state['insight_messages'],
+                    "chart_config": chart_config,
+                    "dimension_filters": filters,
+                    "timestamp": pd.Timestamp.now().strftime("%m/%d %H:%M")
+                }
                 l = json.loads(localS.getItem("estat_my_bookmarks") or "[]")
                 l.append(item)
                 localS.setItem("estat_my_bookmarks", json.dumps(l, ensure_ascii=False))
@@ -433,6 +486,14 @@ if st.session_state.get('current_df') is not None:
         with c_s2:
             t_g = st.text_input("公開名", key="global_title")
             if st.button("全体に共有"):
-                item = {"title": t_g, "table_id": st.session_state['selected_table_id_fixed'], "filter_params": st.session_state['filter_params'], "insight_messages": st.session_state['insight_messages'], "timestamp": pd.Timestamp.now().strftime("%m/%d %H:%M")}
+                item = {
+                    "title": t_g,
+                    "table_id": st.session_state['selected_table_id_fixed'],
+                    "filter_params": st.session_state['filter_params'],
+                    "insight_messages": st.session_state['insight_messages'],
+                    "chart_config": chart_config,
+                    "dimension_filters": filters,
+                    "timestamp": pd.Timestamp.now().strftime("%m/%d %H:%M")
+                }
                 global_gallery.append(item)
                 st.success("共有完了")
