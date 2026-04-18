@@ -14,6 +14,7 @@ from src.data_processor import parse_estat_json_to_dataframe
 from src.api_llm import chat_for_insights, chat_for_filtering, extract_json_parameters, generate_search_query, recommend_tables_from_list
 from streamlit_local_storage import LocalStorage
 
+# --- basic configurations ---
 st.set_page_config(page_title="e-Stat AI Analyzer", layout="wide")
 localS = LocalStorage()
 # st_local_storageのバグ対策：初期化時にNoneになる問題を回避
@@ -57,124 +58,18 @@ def fetch_gemini_models(api_key):
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 name = m.name.replace("models/", "")
-                # Geminiシリーズの中でも「pro」「flash」「ultra」「lite」を含む主幹推論（チャット）モデルのみを厳格に許可
                 if re.search(r'gemini(-[0-9.]+)?-(pro|flash|ultra|lite)', name.lower()):
-                    # 画像(image, vision)、音声(audio)、動画(video)、実験版(exp) などの特殊派生モデルを完全にブロック
                     if not any(bad in name.lower() for bad in ['vision', 'exp', 'image', 'audio', 'video', 'embed']):
                         valid_models.append(name)
         return valid_models
     except:
         return []
 
-st.title("📊 e-Stat AI Analyzer")
-st.markdown("""
-**政府統計の総合窓口「e-Stat」の巨大で複雑なデータを、誰もが簡単に可視化・分析できるエージェント型ツールです。**  
-1. **探す**: カテゴリとキーワードから目的の統計表を検索します。
-2. **絞る**: AI（Gemini）とチャットするだけで、複雑なデータ構造（地域・年齢など）をAIが自動解読して狙ったデータを抽出します。
-3. **描画・分析**: ノイズ（総数等）をワンタッチで除外し、美しいグラフとAIによる考察インサイトを一瞬で生成します。
-""")
-
-# --- Settings Sidebar ---
-with st.sidebar.expander("⚙️ API設定", expanded=True):
-    saved_estat = None
-    saved_gemini = None
-    try:
-        saved_estat = localS.getItem("estat_app_id")
-    except Exception:
-        pass
-    try:
-        saved_gemini = localS.getItem("gemini_api_key")
-    except Exception:
-        pass
-
-    if 'estat_app_id' not in st.session_state:
-        st.session_state['estat_app_id'] = ""
-    if 'gemini_api_key' not in st.session_state:
-        st.session_state['gemini_api_key'] = ""
-
-    # LocalStorageから読み込めた場合、セッションステートへ代入
-    if saved_estat and isinstance(saved_estat, str):
-        st.session_state['estat_app_id'] = saved_estat
-    if saved_gemini and isinstance(saved_gemini, str):
-        st.session_state['gemini_api_key'] = saved_gemini
-
-    current_estat = st.text_input("e-Stat Application ID", value=st.session_state['estat_app_id'], type="password")
-    current_gemini = st.text_input("Gemini API Key", value=st.session_state['gemini_api_key'], type="password")
-    
-    if st.button("設定をブラウザに保存"):
-        localS.setItem("estat_app_id", current_estat, key="set_estat")
-        localS.setItem("gemini_api_key", current_gemini, key="set_gemini")
-        st.session_state['estat_app_id'] = current_estat
-        st.session_state['gemini_api_key'] = current_gemini
-        # APIキーが変わったらモデル一覧を再取得するためにキャッシュクリア
-        fetch_gemini_models.clear()
-        st.success("ブラウザ(LocalStorage)に安全に保存しました。")
-
-# --- API Model Settings ---
-available_models = fetch_gemini_models(st.session_state.get('gemini_api_key'))
-if not available_models:
-    llm_model = st.sidebar.selectbox("クラウドAIモデル", ["APIキーを設定して下さい"], disabled=True)
-else:
-    default_index = 0
-    for i, m in enumerate(available_models):
-        if "gemini-1.5-flash" in m or "gemini-2.5-flash" in m:
-            default_index = i
-            break
-    llm_model = st.sidebar.selectbox("クラウドAIモデル", available_models, index=default_index)
-    st.session_state['llm_model'] = llm_model
-
-# --- Gallery & Bookmarks Sidebar ---
-st.sidebar.divider()
-with st.sidebar.expander("📚 保存済み分析 / 共有ギャラリー"):
-    # 全体ギャラリーの表示
-    st.markdown("##### 🌍 全体ギャラリー")
-    st.info("💡 他のユーザーが共有した分析結果です。クリックすると**当時の検索条件を再現**し、e-Statから最新データを取得して表示します。")
-    st.caption("※サーバー再起動でリセットされます。また、復元後の追加の質問に対するAIの回答は、その都度新たに生成されるため結果が揺らぐ場合があります。")
-    if not global_gallery:
-        st.caption("現在、共有されている分析はありません。")
-    else:
-        for i, item in enumerate(reversed(global_gallery)):
-            if st.button(f"🔗 {item['title']} ({item['timestamp']})", key=f"global_load_{i}"):
-                if restore_saved_analysis(item):
-                    st.rerun()
-                else:
-                    st.error("復元に失敗しました。設定（APIキー等）を確認してください。")
-                
-    st.markdown("---")
-    # マイ・ブックマークの表示
-    st.markdown("##### 🔖 マイ・ブックマーク")
-    st.info("💡 自分だけで閲覧できる保存データです。ブラウザのLocalStorageに保存されています。")
-    st.caption("※統計表の条件レシピのみを保存しているため、復元時にはe-Stat APIから最新の数値を再取得します。")
-    try:
-        saved_str = localS.getItem("estat_my_bookmarks")
-        my_bookmarks = json.loads(saved_str) if saved_str else []
-    except:
-        my_bookmarks = []
-        
-    if not my_bookmarks:
-        st.caption("保存済みの分析はありません。")
-    else:
-        for i, item in enumerate(reversed(my_bookmarks)):
-            col_b, col_d = st.columns([4, 1])
-            if col_b.button(f"📄 {item['title']}", key=f"local_load_{i}"):
-                if restore_saved_analysis(item):
-                    st.rerun()
-                else:
-                    st.error("復元に失敗しました。設定（APIキー等）を確認してください。")
-            if col_d.button("🗑️", key=f"local_del_{i}"):
-                my_bookmarks.pop(len(my_bookmarks) - 1 - i)
-                localS.setItem("estat_my_bookmarks", json.dumps(my_bookmarks, ensure_ascii=False), key=f"del_trigger_{i}")
-                st.rerun()
-    
-    if st.button("🗑️ ブックマークを全消去"):
-        localS.setItem("estat_my_bookmarks", "[]", key="clear_all_bookmarks")
-        st.rerun()
-
+# --- app global states ---
 app_id_ready = bool(st.session_state.get('estat_app_id'))
 api_key_ready = bool(st.session_state.get('gemini_api_key'))
 
-st.divider()
-
+# --- core logic functions ---
 def setup_analysis_phase(selected_table_id):
     if not app_id_ready or not api_key_ready:
         st.error("e-Stat IDとGemini API Keyの両方が必要です。")
@@ -200,11 +95,7 @@ def setup_analysis_phase(selected_table_id):
                 examples = [str(cls.get('@name', cls.get('@code', ''))) for cls in classes[:3]]
                 ex_str = "、".join(examples)
                 if len(classes) > 3: ex_str += " など"
-                
-                if ex_str:
-                    col_details.append(f"・**{col_name}**（例: {ex_str}）")
-                else:
-                    col_details.append(f"・**{col_name}**")
+                col_details.append(f"・**{col_name}**{'（例: ' + ex_str + '）' if ex_str else ''}")
                     
             st.session_state['available_columns_details'] = col_details
             
@@ -223,6 +114,12 @@ def restore_saved_analysis(item):
     if not app_id_ready or not api_key_ready:
         return False
         
+    # 旧形式または不完全なデータのチェック
+    required_keys = ['table_id', 'filter_params', 'insight_messages']
+    if not isinstance(item, dict) or not all(k in item for k in required_keys):
+        st.error("⚠️ この保存データは形式が古いため、現在のバージョンでは復元できません。")
+        return False
+        
     with st.status("🔄 保存時のレシピから分析環境を再現中...", expanded=True) as status:
         try:
             # 1. 基本変数の復旧
@@ -237,7 +134,7 @@ def restore_saved_analysis(item):
             for k in ['manual_tables', 'ai_recommendations', 'ai_search_query']:
                 if k in st.session_state: del st.session_state[k]
                 
-            # 2. メタデータの再取得（カラム情報等の復旧）
+            # 2. メタデータの再取得
             st.write("・e-Statから表の構造情報を取得しています...")
             meta_json = get_meta_info(t_id, app_id=st.session_state['estat_app_id'])
             class_objs = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('CLASS_INF', {}).get('CLASS_OBJ', [])
@@ -255,7 +152,7 @@ def restore_saved_analysis(item):
                 col_details.append(f"・**{col_name}**{'（例: ' + ex_str + '）' if ex_str else ''}")
             st.session_state['available_columns_details'] = col_details
             
-            # 3. 実データの自動再取得（グラフの即時描画のため）
+            # 3. 実データの再取得
             st.write("・保存時の条件でe-Stat APIから最新データを取得しています...")
             raw_json = get_stats_data(t_id, app_id=st.session_state['estat_app_id'], filter_params=f_params)
             df = parse_estat_json_to_dataframe(raw_json)
@@ -271,384 +168,271 @@ def restore_saved_analysis(item):
             status.update(label=f"❌ 復元エラー: {e}", state="error")
             return False
 
+# --- UI Layout ---
+st.title("📊 e-Stat AI Analyzer")
+st.markdown("""
+**政府統計の総合窓口「e-Stat」の巨大で複雑なデータを、誰もが簡単に可視化・分析できるエージェント型ツールです。**  
+1. **探す**: カテゴリとキーワードから目的の統計表を検索。
+2. **絞る**: AIがデータ構造を自動解読。チャットで指示するだけで狙ったデータを抽出。
+3. **描画・分析**: グラフとAIによる考察インサイトを瞬時に生成。
+""")
+
+# --- Settings Sidebar ---
+with st.sidebar.expander("⚙️ API設定", expanded=not app_id_ready):
+    # LocalStorageから読み込み (初期化)
+    try:
+        saved_estat = localS.getItem("estat_app_id")
+        saved_gemini = localS.getItem("gemini_api_key")
+    except:
+        saved_estat = saved_gemini = None
+
+    if saved_estat and 'estat_app_id' not in st.session_state: st.session_state['estat_app_id'] = saved_estat
+    if saved_gemini and 'gemini_api_key' not in st.session_state: st.session_state['gemini_api_key'] = saved_gemini
+
+    current_estat = st.text_input("e-Stat Application ID", value=st.session_state.get('estat_app_id', ""), type="password")
+    current_gemini = st.text_input("Gemini API Key", value=st.session_state.get('gemini_api_key', ""), type="password")
+    
+    if st.button("設定をブラウザに保存"):
+        localS.setItem("estat_app_id", current_estat, key="set_estat")
+        localS.setItem("gemini_api_key", current_gemini, key="set_gemini")
+        st.session_state['estat_app_id'] = current_estat
+        st.session_state['gemini_api_key'] = current_gemini
+        fetch_gemini_models.clear()
+        st.success("設定を保存しました。")
+        st.rerun()
+
+available_models = fetch_gemini_models(st.session_state.get('gemini_api_key'))
+if not available_models:
+    llm_model = st.sidebar.selectbox("クラウドAIモデル", ["APIキーを設定して下さい"], disabled=True)
+else:
+    default_index = 0
+    for i, m in enumerate(available_models):
+        if "gemini-1.5-flash" in m:
+            default_index = i
+            break
+    llm_model = st.sidebar.selectbox("クラウドAIモデル", available_models, index=default_index)
+    st.session_state['llm_model'] = llm_model
+
+# --- Gallery & Bookmarks Sidebar ---
+st.sidebar.divider()
+with st.sidebar.expander("📚 保存済み分析 / 共有ギャラリー"):
+    st.markdown("##### 🌍 全体ギャラリー")
+    st.caption("※サーバー再起動でリセットされます。復元時はAPIで再取得するため最新の状態が反映されます。")
+    if not global_gallery:
+        st.caption("現在、共有されている分析はありません。")
+    else:
+        for i, item in enumerate(reversed(global_gallery)):
+            if st.button(f"🔗 {item.get('title', 'Unknown')} ({item.get('timestamp', '')})", key=f"global_load_{i}"):
+                if restore_saved_analysis(item):
+                    st.rerun()
+                else:
+                    st.error("復元に失敗しました。")
+    if st.button("🚨 全体ギャラリーを全削除"):
+        global_gallery.clear()
+        st.rerun()
+                
+    st.markdown("---")
+    st.markdown("##### 🔖 マイ・ブックマーク")
+    st.caption("※お使いのブラウザに保存された条件レシピです。")
+    try:
+        saved_str = localS.getItem("estat_my_bookmarks")
+        my_bookmarks = json.loads(saved_str) if saved_str else []
+    except:
+        my_bookmarks = []
+        
+    if not my_bookmarks:
+        st.caption("保存済みの分析はありません。")
+    else:
+        for i, item in enumerate(reversed(my_bookmarks)):
+            col_b, col_d = st.columns([4, 1])
+            if col_b.button(f"📄 {item.get('title', '無題')}", key=f"local_load_{i}"):
+                if restore_saved_analysis(item):
+                    st.rerun()
+            if col_d.button("🗑️", key=f"local_del_{i}"):
+                my_bookmarks.pop(len(my_bookmarks) - 1 - i)
+                localS.setItem("estat_my_bookmarks", json.dumps(my_bookmarks, ensure_ascii=False), key=f"del_{i}")
+                st.rerun()
+
+# --- Main Tabs ---
+st.divider()
 tab_ai, tab_manual = st.tabs(["🤖 AIにおまかせ検索", "📚 手動カテゴリ検索"])
 
 with tab_manual:
-    st.markdown("### 📚 手動でカテゴリとキーワードから探す")
-    selected_cat_name = st.selectbox("検索カテゴリ（大分類）", list(ESTAT_CATEGORIES.keys()))
+    st.markdown("### 📚 カテゴリから探す")
+    selected_cat_name = st.selectbox("検索カテゴリ", list(ESTAT_CATEGORIES.keys()))
     stats_field_code = ESTAT_CATEGORIES[selected_cat_name]
-    search_keyword = st.text_input("さらに絞り込むキーワード（任意）", value="", placeholder="例: 出生率, 女性など")
+    search_keyword = st.text_input("キーワード入力", value="", placeholder="例: 消費支出, 雇用")
     
     if st.button("統計表を検索"):
         if not app_id_ready:
-            st.error("先に左メニューの「⚙️ API設定」からe-Stat IDを保存してください。")
+            st.error("e-Stat Application IDを設定してください。")
         else:
             with st.spinner("e-Statを検索中..."):
                 try:
                     tables = search_stats_list(stats_field=stats_field_code, app_id=st.session_state['estat_app_id'], search_word=search_keyword)
-                    if not tables:
-                        st.warning("指定された条件で見つかりませんでした。別のキーワードなどで試してください。")
-                    else:
+                    if tables:
                         st.session_state['manual_tables'] = tables
-                        # Reset ALL other search/analysis states to keep this mode clean
                         for k in ['chat_mode', 'filter_params', 'current_df', 'insight_messages', 'selected_table_id_fixed', 'ai_recommendations', 'ai_search_query', 'last_query']:
                             if k in st.session_state: del st.session_state[k]
-                        st.success(f"{len(tables)} 件の統計表が見つかりました！下部のリストから選択してください。")
+                        st.success(f"{len(tables)}件見つかりました。")
+                    else:
+                        st.warning("見つかりませんでした。")
                 except Exception as e:
-                    st.error(f"エラーが発生しました: {e}")
+                    st.error(f"エラー: {e}")
                     
-    # --- Manual Search Results Dropdown ---
     if 'manual_tables' in st.session_state:
-        def format_table_name(t):
-            if not isinstance(t, dict): return "Unknown Table"
-            stat_name = t.get('STAT_NAME', {}).get('$', '') if isinstance(t.get('STAT_NAME'), dict) else str(t.get('STAT_NAME', ''))
-            title_obj = t.get('TITLE', '')
-            title = title_obj.get('$', '') if isinstance(title_obj, dict) else str(title_obj)
-            title_no = title_obj.get('@no', '') if isinstance(title_obj, dict) else ''
-            prefix = f"{title_no} " if title_no else ""
-            return f"{prefix}{stat_name} - {title}"
-
-        table_options = {format_table_name(t): t.get('@id', '') for t in st.session_state['manual_tables'] if isinstance(t, dict)}
-        
-        selected_table_name = st.selectbox("分析する統計表を選択してください", list(table_options.keys()))
-        selected_table_id = table_options[selected_table_name]
-        
-        selected_t = next((t for t in st.session_state['manual_tables'] if isinstance(t, dict) and t.get('@id') == selected_table_id), None)
-        if selected_t:
-            gov_org = selected_t.get('GOV_ORG', {}).get('$', '') if isinstance(selected_t.get('GOV_ORG'), dict) else str(selected_t.get('GOV_ORG', ''))
-            cycle = selected_t.get('CYCLE', '設定なし')
-            survey_date = str(selected_t.get('SURVEY_DATE', '不明'))
-            if len(survey_date) > 4: survey_date = f"{survey_date[:4]}年{survey_date[4:]}月"
-            open_date = str(selected_t.get('OPEN_DATE', '不明'))
-            if len(open_date) > 4: open_date = f"{open_date[:4]}年{open_date[4:6]}月{open_date[6:]}日"
-            st.info(f"📋 **表の概要**\n- **作成機関**: {gov_org}\n- **調査年月**: {survey_date}\n- **調査周期**: {cycle}\n- **公開日**: {open_date}")
-            
-        if st.button("メタデータを取得し、AIと分析の相談を始める"):
-            if setup_analysis_phase(selected_table_id):
-                st.rerun()
+        def format_t(t): return f"{t.get('TITLE', {}).get('$', t.get('TITLE', ''))}"
+        table_options = {format_t(t): t.get('@id', '') for t in st.session_state['manual_tables']}
+        sel_name = st.selectbox("統計表を選択", list(table_options.keys()))
+        sel_id = table_options[sel_name]
+        if st.button("この表で分析を開始"):
+            if setup_analysis_phase(sel_id): st.rerun()
 
 with tab_ai:
-    st.markdown("### 🤖 データコンシェルジュに探してもらう")
-    
-    ai_query = None
-    # Streamlitの仕様上、画面最下部の入力欄(chat_input)は1つしか置けないため、絞り込みフェーズ(chat_mode)ではこちらを隠す
+    st.markdown("### 🤖 コンシェルジュに相談")
     if st.session_state.get('chat_mode'):
-        st.warning("📌 **現在、選択した統計表の【絞り込み設定】を行っています。画面最下部のチャット欄は絞り込み指示用になっています。**\n\nもし別の統計データを一から探し直したい場合は、下のボタンを押してリセットしてください。")
-        if st.button("🔙 検索をやり直す（リセット）"):
+        st.warning("現在、選択した表の分析中です。別の検索をするにはリセットしてください。")
+        if st.button("検索画面に戻る（リセット）"):
             for k in ['chat_mode', 'manual_tables', 'ai_recommendations', 'ai_search_query', 'current_df', 'filter_params', 'insight_messages', 'selected_table_id_fixed']:
-                if k in st.session_state:
-                    del st.session_state[k]
+                if k in st.session_state: del st.session_state[k]
             st.rerun()
     else:
-        ai_query = st.chat_input("どんなデータを探していますか？ 例: コロナ前後のリモートワークの推移", key="concierge_chat")
-    
-    if ai_query:
-        if not api_key_ready or not app_id_ready:
-            st.error("AIおまかせ検索には、Gemini API Keyとe-Stat IDの両方が必要です。左上メニューから設定してください。")
-        else:
-            st.session_state['ai_search_query'] = ai_query
-            # Reset ALL other search/analysis states to keep this mode clean
-            for k in ['manual_tables', 'chat_mode', 'current_df', 'filter_params', 'insight_messages', 'selected_table_id_fixed']:
-                if k in st.session_state: del st.session_state[k]
+        ai_q = st.chat_input("何について調べたいですか？")
+        if ai_q:
+            if not api_key_ready or not app_id_ready:
+                st.error("API設定が不足しています。")
+            else:
+                st.session_state['ai_search_query'] = ai_q
+                for k in ['manual_tables', 'chat_mode', 'current_df', 'filter_params', 'insight_messages', 'selected_table_id_fixed']:
+                    if k in st.session_state: del st.session_state[k]
 
     if 'ai_search_query' in st.session_state:
-        query_text = st.session_state['ai_search_query']
-        st.chat_message("user").write(query_text)
+        q = st.session_state['ai_search_query']
+        st.chat_message("user").write(q)
+        if 'ai_recommendations' not in st.session_state or st.session_state.get('last_query') != q:
+            st.session_state['last_query'] = q
+            with st.status("AIが検索条件を考えています...", expanded=True) as status:
+                params = generate_search_query(q, ", ".join(ESTAT_CATEGORIES.keys()), st.session_state['gemini_api_key'], llm_model)
+                if params:
+                    raw = search_stats_list(params['category_id'], st.session_state['estat_app_id'], params.get('search_keyword', ''))
+                    if raw:
+                        recs = recommend_tables_from_list(q, raw, st.session_state['gemini_api_key'], llm_model)
+                        if recs:
+                            st.session_state['ai_recommendations'] = recs
+                            st.session_state['raw_tables_dict'] = {t.get('@id'): t for t in raw}
+                            status.update(label="おすすめを見つけました！", state="complete")
         
-        # もし以前の推薦結果がなければ新規検索
-        if 'ai_recommendations' not in st.session_state or st.session_state.get('last_query') != query_text:
-            st.session_state['last_query'] = query_text
-            with st.status("🤖 AIがデータの検索と吟味を行っています...", expanded=True) as status:
-                st.write("1. 🔍 あなたの質問から最適な検索条件を推論中...")
-                cat_str = ", ".join([f"{k}" for k in ESTAT_CATEGORIES.keys()])
-                search_params = generate_search_query(
-                    query_text, 
-                    cat_str, 
-                    st.session_state['gemini_api_key'],
-                    st.session_state.get('llm_model', 'gemini-1.5-flash')
-                )
-                
-                if not search_params or 'category_id' not in search_params:
-                    status.update(label="❌ 検索クエリの推論に失敗しました。", state="error")
-                else:
-                    target_cat = search_params['category_id']
-                    target_kw = search_params.get('search_keyword', '')
-                    st.write(f"2. 🔌 e-Statへアクセス中... (カテゴリ: {target_cat}, キーワード: {target_kw})")
-                    
-                    try:
-                        raw_tables = search_stats_list(stats_field=target_cat, app_id=st.session_state['estat_app_id'], search_word=target_kw)
-                        if not raw_tables:
-                            status.update(label="⚠️ e-Statに該当する統計表がありませんでした。質問を変えてみてください。", state="error")
-                        else:
-                            st.write(f"3. 🧠 {len(raw_tables)}件の候補から、AIが最も目的に近いものを厳選中... (API通信とAIの高度な推理を行うため10秒ほどかかります)")
-                            recommendations = recommend_tables_from_list(
-                                query_text, 
-                                raw_tables, 
-                                st.session_state['gemini_api_key'],
-                                st.session_state.get('llm_model', 'gemini-1.5-flash')
-                            )
-                            
-                            if not recommendations:
-                                status.update(label="❌ 推薦リストの生成に失敗しました。もう一度お試しください。", state="error")
-                            else:
-                                status.update(label=f"✅ {len(recommendations)}件のおすすめ統計表を見つけました！", state="complete")
-                                st.session_state['ai_recommendations'] = recommendations
-                                st.session_state['raw_tables_dict'] = {t.get('@id'): t for t in raw_tables}
-                    except Exception as e:
-                        status.update(label=f"エラー: {e}", state="error")
-                        
         if 'ai_recommendations' in st.session_state:
-            st.markdown("### 💡 AIが厳選したおすすめの統計表")
             for rec in st.session_state['ai_recommendations']:
-                t_id = rec.get('id')
-                reason = rec.get('reason', '理由は提供されていません。')
-                t_info = st.session_state.get('raw_tables_dict', {}).get(t_id)
-                if t_info:
-                    stat_name_obj = t_info.get('STAT_NAME', '')
-                    stat_name = stat_name_obj.get('$', '') if isinstance(stat_name_obj, dict) else str(stat_name_obj)
-                    title_obj = t_info.get('TITLE', '')
-                    title = title_obj.get('$', '') if isinstance(title_obj, dict) else str(title_obj)
-                    full_name = f"{stat_name} - {title}"
-                    
-                    with st.container(border=True):
-                        st.subheader(f"🏅 {full_name}")
-                        st.info(f"**AIの推薦理由:**\n{reason}")
-                        if st.button(f"この表を使って分析を始める", key=f"btn_{t_id}"):
-                            if setup_analysis_phase(t_id):
-                                st.rerun()
+                with st.container(border=True):
+                    st.subheader(f"🏅 {rec.get('title', rec.get('id', '不明'))}")
+                    st.info(rec.get('reason', ''))
+                    if st.button("この表で分析を開始", key=f"ai_sel_{rec.get('id')}"):
+                        if setup_analysis_phase(rec.get('id')): st.rerun()
 
-
-
-st.divider()
-
+# --- Analysis Phase ---
 if st.session_state.get('chat_mode'):
-    if 'messages' not in st.session_state:
-        st.session_state['messages'] = []
-    if 'insight_messages' not in st.session_state:
-        st.session_state['insight_messages'] = []
-        
-    st.subheader("💬 AIと絞り込みデータの相談")
+    st.divider()
+    if 'messages' not in st.session_state: st.session_state['messages'] = []
+    if 'insight_messages' not in st.session_state: st.session_state['insight_messages'] = []
+    
+    st.subheader("💬 データの絞り込み相談")
     if 'available_columns_details' in st.session_state:
-        details_md = "\n".join(st.session_state['available_columns_details'])
-        st.info(f"🔰 **このデータで絞り込み可能な項目（と中身の例）:**\n\n{details_md}")
+        st.info("\n".join(st.session_state['available_columns_details']))
         
-    for msg in st.session_state['messages']:
-        st.chat_message(msg["role"]).write(msg["content"])
-        
-    prompt = st.chat_input("🔍 データの絞り込み条件（地域、年、項目など）をここから指示して調整できます")
+    for msg in st.session_state['messages']: st.chat_message(msg["role"]).write(msg["content"])
+    
+    prompt = st.chat_input("例：東京都だけに絞って、最新の5年間分を表示して")
     if prompt:
-        # チャットが再送信されたら、現在のグラフと確定パラメータをクリア（やり直し状態にする）
         st.session_state['filter_params'] = None
-        if 'current_df' in st.session_state:
-            del st.session_state['current_df']
-            
+        if 'current_df' in st.session_state: del st.session_state['current_df']
         st.session_state['messages'].append({"role": "user", "content": prompt})
-        st.chat_message("user").write(prompt)
-        
         with st.chat_message("assistant"):
-            with st.spinner("AIが考え中..."):
-                reply = chat_for_filtering(
-                    messages=st.session_state['messages'],
-                    meta_data_summary=st.session_state['meta_summary'],
-                    api_key=st.session_state['gemini_api_key'],
-                    model_name=llm_model
-                )
-                st.write(reply)
-                st.session_state['messages'].append({"role": "assistant", "content": reply})
-                
-                extracted_params = extract_json_parameters(reply)
-                if extracted_params:
-                    st.session_state['filter_params'] = extracted_params
-                    st.success(f"以下の条件でデータを取得します: \n{extracted_params}")
-                st.rerun()
+            reply = chat_for_filtering(st.session_state['messages'], st.session_state['meta_summary'], st.session_state['gemini_api_key'], llm_model)
+            st.write(reply)
+            st.session_state['messages'].append({"role": "assistant", "content": reply})
+            extracted = extract_json_parameters(reply)
+            if extracted: st.session_state['filter_params'] = extracted
+            st.rerun()
 
-    if st.session_state.get('filter_params') is not None:
-        if st.button("確定した条件でデータを取得してグラフ化！"):
-            with st.spinner("e-Statから実データを取得・成型中..."):
-                try:
-                    raw_json = get_stats_data(
-                        st.session_state['selected_table_id_fixed'], 
-                        app_id=st.session_state['estat_app_id'], 
-                        filter_params=st.session_state['filter_params']
-                    )
-                    df = parse_estat_json_to_dataframe(raw_json)
-                    
-                    if df is None or df.empty:
-                        st.warning("この条件ではデータが0件でした。チャットを続けて別の条件を探してみてください。")
-                    else:
-                        st.session_state['current_df'] = df
-                        st.success("データの取得に成功しました！")
-                except Exception as e:
-                    st.error(f"データ取得エラー: {e}")
+    if st.session_state.get('filter_params'):
+        if st.button("データを取得して可視化"):
+            try:
+                raw = get_stats_data(st.session_state['selected_table_id_fixed'], st.session_state['estat_app_id'], st.session_state['filter_params'])
+                df = parse_estat_json_to_dataframe(raw)
+                if df is not None and not df.empty:
+                    st.session_state['current_df'] = df
+                    st.success("成功！")
+                else: st.warning("0件です。")
+            except Exception as e: st.error(f"取得失敗: {e}")
 
 if st.session_state.get('current_df') is not None:
     df_base = st.session_state['current_df']
-    
-    st.subheader("🧹 グラフ事前フィルタ（不要な総数や合計を除外）")
-    st.markdown("ここで「総数」などのチェックを外すことで、意味のある美しいグラフが描かれます。")
-    
-    dimensions = [c for c in df_base.columns if c not in ['value', 'unit']]
-    
+    st.subheader("📊 データの確認と可視化")
+    dims = [c for c in df_base.columns if c not in ['value', 'unit']]
     filters = {}
-    if dimensions:
-        cols = st.columns(min(len(dimensions), 4))
-        for i, dim in enumerate(dimensions):
-            col = cols[i % 4]
-            unique_vals = [v for v in df_base[dim].dropna().unique().tolist() if v != '']
-            
-            # 「総数」や「計」を含む要素を初期状態から除外
-            default_vals = [v for v in unique_vals if '総数' not in str(v) and '計' not in str(v) and '不詳' not in str(v)]
-            if not default_vals:
-                default_vals = unique_vals
-                
-            selected = col.multiselect(dim, unique_vals, default=default_vals)
-            filters[dim] = selected
-            
-    # フィルタの適用
-    df_filtered = df_base.copy()
-    for dim, selected in filters.items():
-        if selected != []:
-            df_filtered = df_filtered[df_filtered[dim].isin(selected)]
-        else:
-            # 1つでも完全未選択の軸があればデータなしとする
-            df_filtered = pd.DataFrame(columns=df_base.columns)
-
-    st.subheader("📊 絞り込み後のデータプレビュー")
-    st.dataframe(df_filtered.head())
+    if dims:
+        cols = st.columns(min(len(dims), 4))
+        for i, d in enumerate(dims):
+            uvs = [v for v in df_base[d].dropna().unique() if v != '']
+            defaults = [v for v in uvs if not any(k in str(v) for k in ['総数', '計', '不詳'])]
+            filters[d] = cols[i%4].multiselect(d, uvs, default=defaults or uvs)
     
-    if 'value' in df_filtered.columns and not df_filtered.empty:
-        st.subheader("📈 グラフ設定と描画")
+    df_f = df_base.copy()
+    for d, v in filters.items():
+        if v: df_f = df_f[df_f[d].isin(v)]
+    
+    if not df_f.empty:
+        st.dataframe(df_f.head())
+        col_c1, col_c2, col_c3 = st.columns(3)
+        ct = col_c1.selectbox("グラフ", ["折れ線", "棒", "円"])
+        xa = col_c2.selectbox("X軸", dims)
+        cc = col_c3.selectbox("色分け", ["なし"] + [d for d in dims if d != xa])
         
-        if dimensions:
-            col1, col2, col3 = st.columns(3)
-            chart_type = col1.selectbox("グラフの種類", ["折れ線グラフ", "棒グラフ", "円グラフ"])
-            
-            # 時間系の軸を自動推定
-            time_keys = [d for d in dimensions if '時間' in d or '年' in d or '月' in d or '期' in d or 'time' in d.lower()]
-            default_x = time_keys[0] if time_keys else dimensions[0]
-            
-            x_axis = col2.selectbox("X軸 / 円グラフ区分", dimensions, index=dimensions.index(default_x) if default_x in dimensions else 0)
-            
-            color_col_options = ["なし"] + [c for c in dimensions if c != x_axis]
-            color_col = col3.selectbox("色分け（グループ）", color_col_options)
-            
-            df_plot = df_filtered.sort_values(by=x_axis)
-            color_arg = color_col if color_col != "なし" else None
-            
-            try:
-                if chart_type == "折れ線グラフ":
-                    fig = px.line(df_plot, x=x_axis, y='value', color=color_arg, markers=True, title=f"{x_axis}別の推移")
-                elif chart_type == "棒グラフ":
-                    fig = px.bar(df_plot, x=x_axis, y='value', color=color_arg, title=f"{x_axis}別の比較", barmode='group')
-                elif chart_type == "円グラフ":
-                    fig = px.pie(df_plot, names=x_axis, values='value', title=f"{x_axis}別の割合")
-                
-                st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.warning(f"現在選択中の条件ではグラフを描画できません。別の軸や条件を選んでみてください。（詳細: {e}）")
-        else:
-            st.info("グラフ化するための軸情報がデータに含まれていません。")
+        fig = None
+        if ct == "折れ線": fig = px.line(df_f, x=xa, y='value', color=cc if cc != "なし" else None, markers=True)
+        elif ct == "棒": fig = px.bar(df_f, x=xa, y='value', color=cc if cc != "なし" else None, barmode='group')
+        else: fig = px.pie(df_f, names=xa, values='value')
+        
+        if fig: st.plotly_chart(fig, use_container_width=True)
         
         st.divider()
-        st.subheader("💡 データアナリスト（Gemini）と考察の対話")
-        
-        # インサイト用チャット履歴の初期化
-        if 'insight_messages' not in st.session_state:
-            st.session_state['insight_messages'] = []
-            
+        st.subheader("💡 AIアナリストの考察")
         if not st.session_state['insight_messages']:
-            st.info("まずは抽出した実データの統計情報をもとに、AIに初期の分析・考察レポートを作成させましょう。")
-            if st.button("📊 このデータの全体的な分析・考察を生成する"):
-                st.session_state['insight_messages'].append({
-                    "role": "user",
-                    "content": "この表示されているデータの全体的な傾向や、そこから推論できる社会的背景・インサイトについてプロの視点で考察してください。"
-                })
+            if st.button("初期レポートを生成"):
+                st.session_state['insight_messages'].append({"role": "user", "content": "このデータの傾向を分析して"})
                 st.rerun()
-                
-        # これまでの会話ログを表示
-        for msg in st.session_state['insight_messages']:
-            st.chat_message(msg["role"]).write(msg["content"])
-            
-        # ユーザーの最新の質問が未回答の場合にAIが答える処理
+        
+        for m in st.session_state['insight_messages']: st.chat_message(m["role"]).write(m["content"])
+        
         if st.session_state['insight_messages'] and st.session_state['insight_messages'][-1]["role"] == "user":
-            user_msg = st.session_state['insight_messages'][-1]["content"]
             with st.chat_message("assistant"):
-                with st.spinner("データアナリストが分析中..."):
-                    summary = f"項目数: {len(df_filtered)}\n\n先頭データ:\n{df_filtered.head(10).to_string()}\n\n基本統計量:\n{df_filtered['value'].describe().to_string()}"
-                    reply = chat_for_insights(
-                        messages=st.session_state['insight_messages'],
-                        data_summary=summary,
-                        api_key=st.session_state['gemini_api_key'],
-                        model_name=llm_model
-                    )
-                    st.write(reply)
-                    st.session_state['insight_messages'].append({"role": "assistant", "content": reply})
-                    st.rerun() # 最新の回答を履歴ループに反映させるために再描画
-                    
-        # --- 保存と共有のエリア ---
+                summary = f"データ数: {len(df_f)}\n内容:\n{df_f.head(5).to_string()}"
+                res = chat_for_insights(st.session_state['insight_messages'], summary, st.session_state['gemini_api_key'], llm_model)
+                st.write(res)
+                st.session_state['insight_messages'].append({"role": "assistant", "content": res})
+                st.rerun()
+
+        with st.form("qa_form"):
+            qa_q = st.text_input("追加で質問")
+            if st.form_submit_button("送信"):
+                st.session_state['insight_messages'].append({"role": "user", "content": qa_q})
+                st.rerun()
+
         st.divider()
-        st.subheader("💾 分析の保存と共有")
-        
-        save_col1, save_col2 = st.columns(2)
-        
-        with save_col1:
-            st.markdown("##### 🔖 マイ・ブックマーク")
-            st.caption("お使いのブラウザ（LocalStorage）に保存されます。自分だけが閲覧可能です。")
-            local_title = st.text_input("保存名", placeholder="例: 2023年人口推移の考察", key="local_save_title")
-            if st.button("ブラウザに保存する", use_container_width=True):
-                if not local_title:
-                    st.error("保存名を入力してください。")
-                else:
-                    # 現在の状態をパッケージング
-                    new_item = {
-                        "title": local_title,
-                        "table_id": st.session_state['selected_table_id_fixed'],
-                        "filter_params": st.session_state['filter_params'],
-                        "insight_messages": st.session_state['insight_messages'],
-                        "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
-                    }
-                    # 既存のリストを取得して追加
-                    try:
-                        saved_str = localS.getItem("estat_my_bookmarks")
-                        saved_list = json.loads(saved_str) if saved_str else []
-                    except:
-                        saved_list = []
-                    
-                    saved_list.append(new_item)
-                    localS.setItem("estat_my_bookmarks", json.dumps(saved_list, ensure_ascii=False), key="save_bookmark_trigger")
-                    st.success(f"『{local_title}』をブラウザに保存しました！")
-
-        with save_col2:
-            st.markdown("##### 🌍 全体ギャラリー")
-            st.caption("このアプリを使っている全員に公開されます。※サーバー再起動でリセットされます。")
-            global_title = st.text_input("公開名", placeholder="例: 面白い統計を発見！", key="global_save_title")
-            if st.button("全体に公開する", use_container_width=True):
-                if not global_title:
-                    st.error("公開名を入力してください。")
-                else:
-                    shared_item = {
-                        "title": global_title,
-                        "table_id": st.session_state['selected_table_id_fixed'],
-                        "filter_params": st.session_state['filter_params'],
-                        "insight_messages": st.session_state['insight_messages'],
-                        "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-                        "creator": "匿名ユーザー"
-                    }
-                    global_gallery.append(shared_item)
-                    st.success(f"『{global_title}』を全体ギャラリーに公開しました！")
-
-        # 分析・考察用の入力フォームを最下部に配置
-        with st.form("insight_form", clear_on_submit=True):
-            col1, col2 = st.columns([5, 1])
-            with col1:
-                user_q = st.text_input("分析したいこと、知りたい背景を入力してください", placeholder="例：このデータから言える全体的な傾向は？ 年齢層別の違いの理由は？")
-            with col2:
-                submit_q = st.form_submit_button("質問する")
-                
-        if submit_q and user_q:
-            st.session_state['insight_messages'].append({"role": "user", "content": user_q})
-            st.rerun()
-    else:
-        st.info("データが空になる条件が選択されたか、valueカラムが存在しません。フィルタを見直してください。")
-
-# Trigger Streamlit Reload to fix module cache
+        st.subheader("💾 保存・公開")
+        c_s1, c_s2 = st.columns(2)
+        with c_s1:
+            t_s = st.text_input("保存名", key="local_title")
+            if st.button("ブラウザに保存"):
+                item = {"title": t_s, "table_id": st.session_state['selected_table_id_fixed'], "filter_params": st.session_state['filter_params'], "insight_messages": st.session_state['insight_messages'], "timestamp": pd.Timestamp.now().strftime("%m/%d %H:%M")}
+                l = json.loads(localS.getItem("estat_my_bookmarks") or "[]")
+                l.append(item)
+                localS.setItem("estat_my_bookmarks", json.dumps(l, ensure_ascii=False))
+                st.success("保存完了")
+        with c_s2:
+            t_g = st.text_input("公開名", key="global_title")
+            if st.button("全体に共有"):
+                item = {"title": t_g, "table_id": st.session_state['selected_table_id_fixed'], "filter_params": st.session_state['filter_params'], "insight_messages": st.session_state['insight_messages'], "timestamp": pd.Timestamp.now().strftime("%m/%d %H:%M")}
+                global_gallery.append(item)
+                st.success("共有完了")
