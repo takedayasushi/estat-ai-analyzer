@@ -121,6 +121,49 @@ api_key_ready = bool(st.session_state.get('gemini_api_key'))
 
 st.divider()
 
+def setup_analysis_phase(selected_table_id):
+    if not app_id_ready or not api_key_ready:
+        st.error("e-Stat IDとGemini API Keyの両方が必要です。")
+        return False
+    with st.spinner("表の構造（メタデータ）を読み込んでいます..."):
+        try:
+            meta_json = get_meta_info(selected_table_id, app_id=st.session_state['estat_app_id'])
+            class_objs = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('CLASS_INF', {}).get('CLASS_OBJ', [])
+            meta_summary = json.dumps(class_objs, ensure_ascii=False)
+            
+            st.session_state['meta_summary'] = meta_summary
+            st.session_state['selected_table_id_fixed'] = selected_table_id
+            st.session_state['chat_mode'] = True
+            
+            if isinstance(class_objs, dict):
+                class_objs = [class_objs]
+                
+            col_details = []
+            for obj in class_objs:
+                col_name = obj.get('@name', obj.get('@id', 'Unknown'))
+                classes = obj.get('CLASS', [])
+                if isinstance(classes, dict): classes = [classes]
+                examples = [str(cls.get('@name', cls.get('@code', ''))) for cls in classes[:3]]
+                ex_str = "、".join(examples)
+                if len(classes) > 3: ex_str += " など"
+                
+                if ex_str:
+                    col_details.append(f"・**{col_name}**（例: {ex_str}）")
+                else:
+                    col_details.append(f"・**{col_name}**")
+                    
+            st.session_state['available_columns_details'] = col_details
+            
+            details_str = "\n".join(col_details)
+            st.session_state['messages'] = [
+                {"role": "assistant", "content": f"データ構造を読み込みました！このデータには以下の項目（カラム）が含まれています。\n\n{details_str}\n\nどの項目を、どのような条件（例：東京都のみ、など）で絞り込みたいかチャットで指示してください！"}
+            ]
+            st.session_state['filter_params'] = None
+            return True
+        except Exception as e:
+            st.error(f"メタデータ取得エラー: {e}")
+            return False
+
 tab_ai, tab_manual = st.tabs(["🤖 AIにおまかせ検索", "📚 手動カテゴリ検索"])
 
 with tab_manual:
@@ -139,14 +182,43 @@ with tab_manual:
                     if not tables:
                         st.warning("指定された条件で見つかりませんでした。別のキーワードなどで試してください。")
                     else:
-                        st.session_state['tables'] = tables
-                        # Reset states
-                        if 'chat_mode' in st.session_state: del st.session_state['chat_mode']
-                        if 'filter_params' in st.session_state: del st.session_state['filter_params']
-                        if 'current_df' in st.session_state: del st.session_state['current_df']
+                        st.session_state['manual_tables'] = tables
+                        # Reset ALL other search/analysis states to keep this mode clean
+                        for k in ['chat_mode', 'filter_params', 'current_df', 'insight_messages', 'selected_table_id_fixed', 'ai_recommendations', 'ai_search_query', 'last_query']:
+                            if k in st.session_state: del st.session_state[k]
                         st.success(f"{len(tables)} 件の統計表が見つかりました！下部のリストから選択してください。")
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
+                    
+    # --- Manual Search Results Dropdown ---
+    if 'manual_tables' in st.session_state:
+        def format_table_name(t):
+            if not isinstance(t, dict): return "Unknown Table"
+            stat_name = t.get('STAT_NAME', {}).get('$', '') if isinstance(t.get('STAT_NAME'), dict) else str(t.get('STAT_NAME', ''))
+            title_obj = t.get('TITLE', '')
+            title = title_obj.get('$', '') if isinstance(title_obj, dict) else str(title_obj)
+            title_no = title_obj.get('@no', '') if isinstance(title_obj, dict) else ''
+            prefix = f"{title_no} " if title_no else ""
+            return f"{prefix}{stat_name} - {title}"
+
+        table_options = {format_table_name(t): t.get('@id', '') for t in st.session_state['manual_tables'] if isinstance(t, dict)}
+        
+        selected_table_name = st.selectbox("分析する統計表を選択してください", list(table_options.keys()))
+        selected_table_id = table_options[selected_table_name]
+        
+        selected_t = next((t for t in st.session_state['manual_tables'] if isinstance(t, dict) and t.get('@id') == selected_table_id), None)
+        if selected_t:
+            gov_org = selected_t.get('GOV_ORG', {}).get('$', '') if isinstance(selected_t.get('GOV_ORG'), dict) else str(selected_t.get('GOV_ORG', ''))
+            cycle = selected_t.get('CYCLE', '設定なし')
+            survey_date = str(selected_t.get('SURVEY_DATE', '不明'))
+            if len(survey_date) > 4: survey_date = f"{survey_date[:4]}年{survey_date[4:]}月"
+            open_date = str(selected_t.get('OPEN_DATE', '不明'))
+            if len(open_date) > 4: open_date = f"{open_date[:4]}年{open_date[4:6]}月{open_date[6:]}日"
+            st.info(f"📋 **表の概要**\n- **作成機関**: {gov_org}\n- **調査年月**: {survey_date}\n- **調査周期**: {cycle}\n- **公開日**: {open_date}")
+            
+        if st.button("メタデータを取得し、AIと分析の相談を始める"):
+            if setup_analysis_phase(selected_table_id):
+                st.rerun()
 
 with tab_ai:
     st.markdown("### 🤖 データコンシェルジュに探してもらう")
@@ -156,7 +228,7 @@ with tab_ai:
     if st.session_state.get('chat_mode'):
         st.warning("📌 **現在、選択した統計表の【絞り込み設定】を行っています。画面最下部のチャット欄は絞り込み指示用になっています。**\n\nもし別の統計データを一から探し直したい場合は、下のボタンを押してリセットしてください。")
         if st.button("🔙 検索をやり直す（リセット）"):
-            for k in ['chat_mode', 'tables', 'ai_recommendations', 'ai_search_query', 'current_df', 'filter_params', 'selected_table_id_fixed']:
+            for k in ['chat_mode', 'manual_tables', 'ai_recommendations', 'ai_search_query', 'current_df', 'filter_params', 'insight_messages', 'selected_table_id_fixed']:
                 if k in st.session_state:
                     del st.session_state[k]
             st.rerun()
@@ -168,9 +240,9 @@ with tab_ai:
             st.error("AIおまかせ検索には、Gemini API Keyとe-Stat IDの両方が必要です。左上メニューから設定してください。")
         else:
             st.session_state['ai_search_query'] = ai_query
-            # Reset standard table view
-            if 'tables' in st.session_state: del st.session_state['tables']
-            if 'chat_mode' in st.session_state: del st.session_state['chat_mode']
+            # Reset ALL other search/analysis states to keep this mode clean
+            for k in ['manual_tables', 'chat_mode', 'current_df', 'filter_params', 'insight_messages', 'selected_table_id_fixed']:
+                if k in st.session_state: del st.session_state[k]
 
     if 'ai_search_query' in st.session_state:
         query_text = st.session_state['ai_search_query']
@@ -235,85 +307,10 @@ with tab_ai:
                         st.subheader(f"🏅 {full_name}")
                         st.info(f"**AIの推薦理由:**\n{reason}")
                         if st.button(f"この表を使って分析を始める", key=f"btn_{t_id}"):
-                            # 選択した表をシミュレートして既存の処理フローに繋げる
-                            st.session_state['tables'] = [t_info]
-                            st.rerun()
+                            if setup_analysis_phase(t_id):
+                                st.rerun()
 
-# 結果があれば選択肢として表示
-if 'tables' in st.session_state:
-    def format_table_name(t):
-        if not isinstance(t, dict):
-            return "Unknown Table"
-        stat_name_obj = t.get('STAT_NAME', '')
-        stat_name = stat_name_obj.get('$', '') if isinstance(stat_name_obj, dict) else str(stat_name_obj)
-        title_obj = t.get('TITLE', '')
-        title = title_obj.get('$', '') if isinstance(title_obj, dict) else str(title_obj)
-        title_no = title_obj.get('@no', '') if isinstance(title_obj, dict) else ''
-        prefix = f"{title_no} " if title_no else ""
-        return f"{prefix}{stat_name} - {title}"
 
-    table_options = {format_table_name(t): t.get('@id', '') for t in st.session_state['tables'] if isinstance(t, dict)}
-    
-    selected_table_name = st.selectbox("分析する統計表を選択してください", list(table_options.keys()))
-    selected_table_id = table_options[selected_table_name]
-    
-    # 選択した表の概要（メタデータ）を即座に表示
-    selected_t = next((t for t in st.session_state['tables'] if isinstance(t, dict) and t.get('@id') == selected_table_id), None)
-    if selected_t:
-        gov_org_obj = selected_t.get('GOV_ORG', '')
-        gov_org = gov_org_obj.get('$', '') if isinstance(gov_org_obj, dict) else str(gov_org_obj)
-        
-        cycle = selected_t.get('CYCLE', '設定なし')
-        survey_date = str(selected_t.get('SURVEY_DATE', '不明'))
-        if len(survey_date) > 4: survey_date = f"{survey_date[:4]}年{survey_date[4:]}月" # Basic formatting
-        
-        open_date = str(selected_t.get('OPEN_DATE', '不明'))
-        if len(open_date) > 4: open_date = f"{open_date[:4]}年{open_date[4:6]}月{open_date[6:]}日"
-        
-        st.info(f"📋 **表の概要**\n- **作成機関**: {gov_org}\n- **調査年月**: {survey_date}\n- **調査周期**: {cycle}\n- **公開日**: {open_date}")
-        
-    
-    if st.button("メタデータを取得し、AIと分析の相談を始める"):
-        if not app_id_ready or not api_key_ready:
-            st.error("e-Stat IDとGemini API Keyの両方が必要です。")
-        else:
-            with st.spinner("表の構造（メタデータ）を読み込んでいます..."):
-                try:
-                    meta_json = get_meta_info(selected_table_id, app_id=st.session_state['estat_app_id'])
-                    class_objs = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('CLASS_INF', {}).get('CLASS_OBJ', [])
-                    meta_summary = json.dumps(class_objs, ensure_ascii=False)
-                    
-                    st.session_state['meta_summary'] = meta_summary
-                    st.session_state['selected_table_id_fixed'] = selected_table_id
-                    st.session_state['chat_mode'] = True
-                    
-                    # Extract column names and examples for presentation
-                    if isinstance(class_objs, dict):
-                        class_objs = [class_objs]
-                        
-                    col_details = []
-                    for obj in class_objs:
-                        col_name = obj.get('@name', obj.get('@id', 'Unknown'))
-                        classes = obj.get('CLASS', [])
-                        if isinstance(classes, dict): classes = [classes]
-                        examples = [str(cls.get('@name', cls.get('@code', ''))) for cls in classes[:3]]
-                        ex_str = "、".join(examples)
-                        if len(classes) > 3: ex_str += " など"
-                        
-                        if ex_str:
-                            col_details.append(f"・**{col_name}**（例: {ex_str}）")
-                        else:
-                            col_details.append(f"・**{col_name}**")
-                            
-                    st.session_state['available_columns_details'] = col_details
-                    
-                    details_str = "\n".join(col_details)
-                    st.session_state['messages'] = [
-                        {"role": "assistant", "content": f"データ構造を読み込みました！このデータには以下の項目（カラム）が含まれています。\n\n{details_str}\n\nどの項目を、どのような条件（例：東京都のみ、など）で絞り込みたいかチャットで指示してください！"}
-                    ]
-                    st.session_state['filter_params'] = None
-                except Exception as e:
-                    st.error(f"メタデータ取得エラー: {e}")
 
 st.divider()
 
