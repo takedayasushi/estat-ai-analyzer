@@ -323,7 +323,7 @@ if st.session_state.get('chat_mode'):
     for msg in st.session_state['messages']:
         st.chat_message(msg["role"]).write(msg["content"])
         
-    prompt = st.chat_input("例: 条件を絞りたい（やり直す場合もここに入力して送信）")
+    prompt = st.chat_input("🔍 データの絞り込み条件（地域、年、項目など）をここから指示して調整できます")
     if prompt:
         # チャットが再送信されたら、現在のグラフと確定パラメータをクリア（やり直し状態にする）
         st.session_state['filter_params'] = None
@@ -457,21 +457,9 @@ if st.session_state.get('current_df') is not None:
         for msg in st.session_state['insight_messages']:
             st.chat_message(msg["role"]).write(msg["content"])
             
-        # インラインでのテキストボックスと送信ボタンを設置（chat_inputとの衝突回避のため）
-        with st.form("insight_form", clear_on_submit=True):
-            col1, col2 = st.columns([5, 1])
-            with col1:
-                user_q = st.text_input("分析したいこと、知りたい背景を入力してください", placeholder="例：このデータから言える全体的な傾向は？ 年齢層別の違いの理由は？")
-            with col2:
-                submit_q = st.form_submit_button("質問する")
-                
-        if submit_q and user_q:
-            st.session_state['insight_messages'].append({"role": "user", "content": user_q})
-            # 描画を即座に反映させるためrerunする前に仮表示するか、そのまま処理するか
-            st.rerun()
-            
         # ユーザーの最新の質問が未回答の場合にAIが答える処理
         if st.session_state['insight_messages'] and st.session_state['insight_messages'][-1]["role"] == "user":
+            user_msg = st.session_state['insight_messages'][-1]["content"]
             with st.chat_message("assistant"):
                 with st.spinner("データアナリストが分析中..."):
                     summary = f"項目数: {len(df_filtered)}\n\n先頭データ:\n{df_filtered.head(10).to_string()}\n\n基本統計量:\n{df_filtered['value'].describe().to_string()}"
@@ -483,6 +471,19 @@ if st.session_state.get('current_df') is not None:
                     )
                     st.write(reply)
                     st.session_state['insight_messages'].append({"role": "assistant", "content": reply})
+                    st.rerun() # 最新の回答を履歴ループに反映させるために再描画
+                    
+        # 分析・考察用の入力フォームを最下部に配置
+        with st.form("insight_form", clear_on_submit=True):
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                user_q = st.text_input("分析したいこと、知りたい背景を入力してください", placeholder="例：このデータから言える全体的な傾向は？ 年齢層別の違いの理由は？")
+            with col2:
+                submit_q = st.form_submit_button("質問する")
+                
+        if submit_q and user_q:
+            st.session_state['insight_messages'].append({"role": "user", "content": user_q})
+            st.rerun()
     else:
         st.info("データが空になる条件が選択されたか、valueカラムが存在しません。フィルタを見直してください。")
 
