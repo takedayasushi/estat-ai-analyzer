@@ -44,7 +44,8 @@ def fetch_gemini_models(api_key):
                 name = m.name.replace("models/", "")
                 # Geminiシリーズの中でも「pro」「flash」「ultra」「lite」を含む主幹推論（チャット）モデルのみを厳格に許可
                 if re.search(r'gemini(-[0-9.]+)?-(pro|flash|ultra|lite)', name.lower()):
-                    if 'vision' not in name.lower() and 'exp' not in name.lower():
+                    # 画像(image, vision)、音声(audio)、動画(video)、実験版(exp) などの特殊派生モデルを完全にブロック
+                    if not any(bad in name.lower() for bad in ['vision', 'exp', 'image', 'audio', 'video', 'embed']):
                         valid_models.append(name)
         return valid_models
     except:
