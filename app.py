@@ -447,6 +447,15 @@ if st.session_state.get('current_df') is not None:
         if 'insight_messages' not in st.session_state:
             st.session_state['insight_messages'] = []
             
+        if not st.session_state['insight_messages']:
+            st.info("まずは抽出した実データの統計情報をもとに、AIに初期の分析・考察レポートを作成させましょう。")
+            if st.button("📊 このデータの全体的な分析・考察を生成する"):
+                st.session_state['insight_messages'].append({
+                    "role": "user",
+                    "content": "この表示されているデータの全体的な傾向や、そこから推論できる社会的背景・インサイトについてプロの視点で考察してください。"
+                })
+                st.rerun()
+                
         # これまでの会話ログを表示
         for msg in st.session_state['insight_messages']:
             st.chat_message(msg["role"]).write(msg["content"])
