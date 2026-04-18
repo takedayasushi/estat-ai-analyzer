@@ -78,6 +78,19 @@ with st.sidebar.expander("⚙️ API設定", expanded=True):
     current_estat = st.text_input("e-Stat Application ID", value=st.session_state['estat_app_id'], type="password")
     current_gemini = st.text_input("Gemini API Key", value=st.session_state['gemini_api_key'], type="password")
     
+    # --- API Model Settings ---
+    available_models = fetch_gemini_models(st.session_state.get('gemini_api_key'))
+    if not available_models:
+        llm_model = st.selectbox("クラウドAIモデル", ["APIキーを設定して下さい"], disabled=True)
+    else:
+        default_index = 0
+        for i, m in enumerate(available_models):
+            if "gemini-1.5-flash" in m or "gemini-2.5-flash" in m:
+                default_index = i
+                break
+        llm_model = st.selectbox("クラウドAIモデル", available_models, index=default_index)
+        st.session_state['llm_model'] = llm_model
+
     if st.button("設定をブラウザに保存"):
         localS.setItem("estat_app_id", current_estat, key="set_estat")
         localS.setItem("gemini_api_key", current_gemini, key="set_gemini")
@@ -87,44 +100,119 @@ with st.sidebar.expander("⚙️ API設定", expanded=True):
         fetch_gemini_models.clear()
         st.success("ブラウザ(LocalStorage)に安全に保存しました。")
 
-st.sidebar.header("検索設定")
-selected_cat_name = st.sidebar.selectbox("検索カテゴリ（大分類）", list(ESTAT_CATEGORIES.keys()))
-stats_field_code = ESTAT_CATEGORIES[selected_cat_name]
-search_keyword = st.sidebar.text_input("さらに絞り込むキーワード（任意）", value="", placeholder="例: 出生率, 女性など")
-
-available_models = fetch_gemini_models(st.session_state.get('gemini_api_key'))
-if not available_models:
-    llm_model = st.sidebar.selectbox("クラウドAIモデル", ["APIキーを設定して下さい"], disabled=True)
-else:
-    default_index = 0
-    # なるべく最新のflashモデルをデフォルトにする
-    for i, m in enumerate(available_models):
-        if "gemini-1.5-flash" in m or "gemini-2.5-flash" in m:
-            default_index = i
-            break
-    llm_model = st.sidebar.selectbox("クラウドAIモデル", available_models, index=default_index)
-
 app_id_ready = bool(st.session_state.get('estat_app_id'))
 api_key_ready = bool(st.session_state.get('gemini_api_key'))
 
-if st.sidebar.button("統計表を検索"):
-    if not app_id_ready:
-        st.sidebar.error("先に「⚙️ API設定」からe-Stat IDを保存してください。")
-    else:
-        with st.spinner("e-Statを検索中..."):
-            try:
-                tables = search_stats_list(stats_field=stats_field_code, app_id=st.session_state['estat_app_id'], search_word=search_keyword)
-                if not tables:
-                    st.warning("指定された条件で見つかりませんでした。別のキーワードなどで試してください。")
+st.divider()
+
+tab_ai, tab_manual = st.tabs(["🤖 AIにおまかせ検索", "📚 手動カテゴリ検索"])
+
+with tab_manual:
+    st.markdown("### 📚 手動でカテゴリとキーワードから探す")
+    selected_cat_name = st.selectbox("検索カテゴリ（大分類）", list(ESTAT_CATEGORIES.keys()))
+    stats_field_code = ESTAT_CATEGORIES[selected_cat_name]
+    search_keyword = st.text_input("さらに絞り込むキーワード（任意）", value="", placeholder="例: 出生率, 女性など")
+    
+    if st.button("統計表を検索"):
+        if not app_id_ready:
+            st.error("先に左メニューの「⚙️ API設定」からe-Stat IDを保存してください。")
+        else:
+            with st.spinner("e-Statを検索中..."):
+                try:
+                    tables = search_stats_list(stats_field=stats_field_code, app_id=st.session_state['estat_app_id'], search_word=search_keyword)
+                    if not tables:
+                        st.warning("指定された条件で見つかりませんでした。別のキーワードなどで試してください。")
+                    else:
+                        st.session_state['tables'] = tables
+                        # Reset states
+                        if 'chat_mode' in st.session_state: del st.session_state['chat_mode']
+                        if 'filter_params' in st.session_state: del st.session_state['filter_params']
+                        if 'current_df' in st.session_state: del st.session_state['current_df']
+                        st.success(f"{len(tables)} 件の統計表が見つかりました！下部のリストから選択してください。")
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
+
+with tab_ai:
+    st.markdown("### 🤖 データコンシェルジュに探してもらう")
+    ai_query = st.chat_input("どんなデータを探していますか？ 例: コロナ前後のリモートワークの推移")
+    
+    if ai_query:
+        if not api_key_ready or not app_id_ready:
+            st.error("AIおまかせ検索には、Gemini API Keyとe-Stat IDの両方が必要です。左上メニューから設定してください。")
+        else:
+            st.session_state['ai_search_query'] = ai_query
+            # Reset standard table view
+            if 'tables' in st.session_state: del st.session_state['tables']
+            if 'chat_mode' in st.session_state: del st.session_state['chat_mode']
+
+    if 'ai_search_query' in st.session_state:
+        query_text = st.session_state['ai_search_query']
+        st.chat_message("user").write(query_text)
+        
+        # もし以前の推薦結果がなければ新規検索
+        if 'ai_recommendations' not in st.session_state or st.session_state.get('last_query') != query_text:
+            st.session_state['last_query'] = query_text
+            with st.status("🤖 AIがデータの検索と吟味を行っています...", expanded=True) as status:
+                st.write("1. 🔍 あなたの質問から最適な検索条件を推論中...")
+                from src.api_llm import generate_search_query, recommend_tables_from_list
+                
+                cat_str = ", ".join([f"{k}" for k in ESTAT_CATEGORIES.keys()])
+                search_params = generate_search_query(
+                    query_text, 
+                    cat_str, 
+                    st.session_state['gemini_api_key'],
+                    st.session_state.get('llm_model', 'gemini-1.5-flash')
+                )
+                
+                if not search_params or 'category_id' not in search_params:
+                    status.update(label="❌ 検索クエリの推論に失敗しました。", state="error")
                 else:
-                    st.session_state['tables'] = tables
-                    # Reset states
-                    if 'chat_mode' in st.session_state: del st.session_state['chat_mode']
-                    if 'filter_params' in st.session_state: del st.session_state['filter_params']
-                    if 'current_df' in st.session_state: del st.session_state['current_df']
-                    st.success(f"{len(tables)} 件の統計表が見つかりました！")
-            except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
+                    target_cat = search_params['category_id']
+                    target_kw = search_params.get('search_keyword', '')
+                    st.write(f"2. 🔌 e-Statへアクセス中... (カテゴリ: {target_cat}, キーワード: {target_kw})")
+                    
+                    try:
+                        raw_tables = search_stats_list(stats_field=target_cat, app_id=st.session_state['estat_app_id'], search_word=target_kw)
+                        if not raw_tables:
+                            status.update(label="⚠️ e-Statに該当する統計表がありませんでした。質問を変えてみてください。", state="error")
+                        else:
+                            st.write(f"3. 🧠 {len(raw_tables)}件の候補から、AIが最も目的に近いものを厳選中... (API通信とAIの高度な推理を行うため10秒ほどかかります)")
+                            recommendations = recommend_tables_from_list(
+                                query_text, 
+                                raw_tables, 
+                                st.session_state['gemini_api_key'],
+                                st.session_state.get('llm_model', 'gemini-1.5-flash')
+                            )
+                            
+                            if not recommendations:
+                                status.update(label="❌ 推薦リストの生成に失敗しました。もう一度お試しください。", state="error")
+                            else:
+                                status.update(label=f"✅ {len(recommendations)}件のおすすめ統計表を見つけました！", state="complete")
+                                st.session_state['ai_recommendations'] = recommendations
+                                st.session_state['raw_tables_dict'] = {t.get('@id'): t for t in raw_tables}
+                    except Exception as e:
+                        status.update(label=f"エラー: {e}", state="error")
+                        
+        if 'ai_recommendations' in st.session_state:
+            st.markdown("### 💡 AIが厳選したおすすめの統計表")
+            for rec in st.session_state['ai_recommendations']:
+                t_id = rec.get('id')
+                reason = rec.get('reason', '理由は提供されていません。')
+                t_info = st.session_state.get('raw_tables_dict', {}).get(t_id)
+                if t_info:
+                    stat_name_obj = t_info.get('STAT_NAME', '')
+                    stat_name = stat_name_obj.get('$', '') if isinstance(stat_name_obj, dict) else str(stat_name_obj)
+                    title_obj = t_info.get('TITLE', '')
+                    title = title_obj.get('$', '') if isinstance(title_obj, dict) else str(title_obj)
+                    full_name = f"{stat_name} - {title}"
+                    
+                    with st.container(border=True):
+                        st.subheader(f"🏅 {full_name}")
+                        st.info(f"**AIの推薦理由:**\n{reason}")
+                        if st.button(f"この表を使って分析を始める", key=f"btn_{t_id}"):
+                            # 選択した表をシミュレートして既存の処理フローに繋げる
+                            st.session_state['tables'] = [t_info]
+                            st.rerun()
 
 # 結果があれば選択肢として表示
 if 'tables' in st.session_state:

@@ -81,4 +81,101 @@ def extract_json_parameters(text: str):
             return json.loads(match.group(1))
         except json.JSONDecodeError:
             pass
+    # 括弧だけのJSONブロックがない場合もフォールバックでパースを試みる
+    try:
+        # {} や [] の抽出
+        match_obj = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
+        if match_obj:
+            return json.loads(match_obj.group(1))
+    except:
+        pass
     return None
+
+def generate_search_query(user_intent: str, categories_str: str, api_key: str, model_name: str = "gemini-1.5-flash"):
+    """
+    Translates natural language user intent into an e-Stat API search query (category and keyword).
+    """
+    if not api_key:
+        return None
+    
+    prompt = f"""
+あなたは日本の政府統計（e-Stat）の専門データアナリストアシスタントです。
+ユーザーの「知りたいこと（自然言語）」を分析し、e-StatのAPIを使って検索するための「大分類カテゴリ番号」と「検索キーワード」を推論してください。
+
+【ユーザーの知りたいこと】
+{user_intent}
+
+【選択可能な大分類カテゴリ】
+{categories_str}
+
+【出力ルール】
+必ず以下のフォーマットのJSONで出力してください。
+- category_id: 最も適切な大分類の2桁の数字（例: "02"）
+- search_keyword: e-Statでのヒット率を高めるための検索キーワード。複数ある場合はスペース区切り。（例: "出生率 婚姻"）。曖昧すぎる場合は大分類のみで絞るため空文字でもOK。
+
+出力例:
+```json
+{{
+    "category_id": "02",
+    "search_keyword": "出生"
+}}
+```
+"""
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(prompt)
+        return extract_json_parameters(response.text)
+    except Exception as e:
+        print(e)
+        return None
+
+def recommend_tables_from_list(user_intent: str, tables: list, api_key: str, model_name: str = "gemini-1.5-flash"):
+    """
+    Takes a massive list of table dictionaries from e-Stat and uses Gemini to pick the top 3-5 best tables.
+    """
+    if not api_key or not tables:
+        return []
+    
+    # Token節約のため、最大50件に制限し、必要な情報だけ抽出する
+    simplified_tables = []
+    for t in tables[:50]:
+        simplified_tables.append({
+            "id": t.get('@id', ''),
+            "stat_name": t.get('STAT_NAME', {}).get('$', '') if isinstance(t.get('STAT_NAME'), dict) else t.get('STAT_NAME', ''),
+            "table_name": t.get('TABLE_NAME', {}).get('$', '') if isinstance(t.get('TABLE_NAME'), dict) else t.get('TABLE_NAME', ''),
+            "survey_date": t.get('SURVEY_DATE', '')
+        })
+        
+    tables_json_str = json.dumps(simplified_tables, ensure_ascii=False)
+
+    prompt = f"""
+あなたは日本の政府統計（e-Stat）の専門データコンシェルジュです。
+ユーザーの目的に対してe-Statで検索をかけたところ、以下の統計表リストがヒットしました。
+この中から、ユーザーの目的に最も合致しそうな素晴らしい統計表を **最大5つ**（1つの場合も可）厳選し、その推薦理由とともにJSONで返してください。
+
+【ユーザーの目的】
+{user_intent}
+
+【ヒットした統計表リスト（一部抽出）】
+{tables_json_str}
+
+【出力ルール】
+必ず以下のフォーマットのJSONのリスト（配列）を出力してください。
+```json
+[
+  {{
+    "id": "抽出した表のid",
+    "reason": "なぜこの表が目的に一番合致しているか、ユーザーへの推薦コメント（日本語で簡潔に）"
+  }}
+]
+```
+"""
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(prompt)
+        return extract_json_parameters(response.text)
+    except Exception as e:
+        print(f"Error in recommend_tables: {e}")
+        return []
