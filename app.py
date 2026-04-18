@@ -78,19 +78,6 @@ with st.sidebar.expander("⚙️ API設定", expanded=True):
     current_estat = st.text_input("e-Stat Application ID", value=st.session_state['estat_app_id'], type="password")
     current_gemini = st.text_input("Gemini API Key", value=st.session_state['gemini_api_key'], type="password")
     
-    # --- API Model Settings ---
-    available_models = fetch_gemini_models(st.session_state.get('gemini_api_key'))
-    if not available_models:
-        llm_model = st.selectbox("クラウドAIモデル", ["APIキーを設定して下さい"], disabled=True)
-    else:
-        default_index = 0
-        for i, m in enumerate(available_models):
-            if "gemini-1.5-flash" in m or "gemini-2.5-flash" in m:
-                default_index = i
-                break
-        llm_model = st.selectbox("クラウドAIモデル", available_models, index=default_index)
-        st.session_state['llm_model'] = llm_model
-
     if st.button("設定をブラウザに保存"):
         localS.setItem("estat_app_id", current_estat, key="set_estat")
         localS.setItem("gemini_api_key", current_gemini, key="set_gemini")
@@ -99,6 +86,19 @@ with st.sidebar.expander("⚙️ API設定", expanded=True):
         # APIキーが変わったらモデル一覧を再取得するためにキャッシュクリア
         fetch_gemini_models.clear()
         st.success("ブラウザ(LocalStorage)に安全に保存しました。")
+
+# --- API Model Settings ---
+available_models = fetch_gemini_models(st.session_state.get('gemini_api_key'))
+if not available_models:
+    llm_model = st.sidebar.selectbox("クラウドAIモデル", ["APIキーを設定して下さい"], disabled=True)
+else:
+    default_index = 0
+    for i, m in enumerate(available_models):
+        if "gemini-1.5-flash" in m or "gemini-2.5-flash" in m:
+            default_index = i
+            break
+    llm_model = st.sidebar.selectbox("クラウドAIモデル", available_models, index=default_index)
+    st.session_state['llm_model'] = llm_model
 
 app_id_ready = bool(st.session_state.get('estat_app_id'))
 api_key_ready = bool(st.session_state.get('gemini_api_key'))
