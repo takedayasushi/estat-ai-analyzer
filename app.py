@@ -369,6 +369,11 @@ with tab_ai:
 st.divider()
 
 if st.session_state.get('chat_mode'):
+    if 'messages' not in st.session_state:
+        st.session_state['messages'] = []
+    if 'insight_messages' not in st.session_state:
+        st.session_state['insight_messages'] = []
+        
     st.subheader("💬 AIと絞り込みデータの相談")
     if 'available_columns_details' in st.session_state:
         details_md = "\n".join(st.session_state['available_columns_details'])
