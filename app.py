@@ -6,7 +6,7 @@ import re
 import google.generativeai as genai
 from src.api_estat import search_stats_list, get_meta_info, get_stats_data
 from src.data_processor import parse_estat_json_to_dataframe
-from src.api_llm import generate_insights, chat_for_filtering, extract_json_parameters, generate_search_query, recommend_tables_from_list
+from src.api_llm import chat_for_insights, chat_for_filtering, extract_json_parameters, generate_search_query, recommend_tables_from_list
 from streamlit_local_storage import LocalStorage
 
 st.set_page_config(page_title="e-Stat AI Analyzer", layout="wide")
@@ -424,11 +424,42 @@ if st.session_state.get('current_df') is not None:
         else:
             st.info("グラフ化するための軸情報がデータに含まれていません。")
         
-        st.subheader("🤖 AIによるインサイト（Gemini）")
-        if st.button("このデータからインサイトを生成"):
-            with st.spinner("AIが考察を生成中..."):
-                summary = f"項目数: {len(df_filtered)}\n\n先頭データ:\n{df_filtered.head(10).to_string()}\n\n基本統計量:\n{df_filtered['value'].describe().to_string()}"
-                insight = generate_insights(summary, api_key=st.session_state['gemini_api_key'], model_name=llm_model)
-                st.markdown(f"> {insight}")
+        st.divider()
+        st.subheader("💡 データアナリスト（Gemini）と考察の対話")
+        
+        # インサイト用チャット履歴の初期化
+        if 'insight_messages' not in st.session_state:
+            st.session_state['insight_messages'] = []
+            
+        # これまでの会話ログを表示
+        for msg in st.session_state['insight_messages']:
+            st.chat_message(msg["role"]).write(msg["content"])
+            
+        # インラインでのテキストボックスと送信ボタンを設置（chat_inputとの衝突回避のため）
+        with st.form("insight_form", clear_on_submit=True):
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                user_q = st.text_input("分析したいこと、知りたい背景を入力してください", placeholder="例：このデータから言える全体的な傾向は？ 年齢層別の違いの理由は？")
+            with col2:
+                submit_q = st.form_submit_button("質問する")
+                
+        if submit_q and user_q:
+            st.session_state['insight_messages'].append({"role": "user", "content": user_q})
+            # 描画を即座に反映させるためrerunする前に仮表示するか、そのまま処理するか
+            st.rerun()
+            
+        # ユーザーの最新の質問が未回答の場合にAIが答える処理
+        if st.session_state['insight_messages'] and st.session_state['insight_messages'][-1]["role"] == "user":
+            with st.chat_message("assistant"):
+                with st.spinner("データアナリストが分析中..."):
+                    summary = f"項目数: {len(df_filtered)}\n\n先頭データ:\n{df_filtered.head(10).to_string()}\n\n基本統計量:\n{df_filtered['value'].describe().to_string()}"
+                    reply = chat_for_insights(
+                        messages=st.session_state['insight_messages'],
+                        data_summary=summary,
+                        api_key=st.session_state['gemini_api_key'],
+                        model_name=llm_model
+                    )
+                    st.write(reply)
+                    st.session_state['insight_messages'].append({"role": "assistant", "content": reply})
     else:
         st.info("データが空になる条件が選択されたか、valueカラムが存在しません。フィルタを見直してください。")

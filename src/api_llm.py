@@ -2,28 +2,39 @@ import google.generativeai as genai
 import json
 import re
 
-def generate_insights(data_summary: str, api_key: str, model_name: str = "gemini-1.5-flash"):
+def chat_for_insights(messages: list, data_summary: str, api_key: str, model_name: str = "gemini-1.5-flash"):
     """
-    Generate insights using Google Gemini API. (Used after data is fetched)
+    Interactive Q&A and insight generation using Google Gemini API.
     """
     if not api_key:
         return "⚠️ Gemini APIキーが設定されていません。"
 
-    prompt = f"""
+    system_instruction = f"""
 あなたはプロのデータアナリストです。
-以下の日本の統計データの要約を見て、数値の変化のトレンドや、そこから推測できる社会的背景・インサイトを日本語でわかりやすく考察してください。
+以下の日本の統計データの要約（実データ）を踏まえて、ユーザーからの質問に答えたり、数値の変化のトレンド、推測できる社会的背景・インサイトを日本語でわかりやすく考察してください。
+ユーザーが「考察して」と入力した場合は、全体を俯瞰したプロのレポートを出力してください。詳細な質問が来た場合は、データに基づいて正確に答えてください。
 
-【データ要約】
+【現在グラフ化されている実データの要約情報】
 {data_summary}
 """
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(prompt)
+        model = genai.GenerativeModel(
+            model_name=model_name,
+            system_instruction=system_instruction
+        )
+        
+        gemini_history = []
+        for m in messages[:-1]:
+            role = "user" if m["role"] == "user" else "model"
+            gemini_history.append({"role": role, "parts": [m["content"]]})
+            
+        chat = model.start_chat(history=gemini_history)
+        response = chat.send_message(messages[-1]["content"])
         return response.text
     except Exception as e:
-        return f"⚠️ インサイトの生成中にエラーが発生しました。\n\n詳細エラー: {str(e)}"
+        return f"⚠️ 考察の生成中にエラーが発生しました。\n\n詳細エラー: {str(e)}"
 
 def chat_for_filtering(messages: list, meta_data_summary: str, api_key: str, model_name: str = "gemini-1.5-flash"):
     """
