@@ -292,17 +292,25 @@ if st.session_state.get('chat_mode'):
             st.markdown("\n".join(st.session_state['available_columns_details']))
             
     for msg in st.session_state['messages']: st.chat_message(msg["role"]).write(msg["content"])
-    p = st.chat_input("絞り込みの指示を入力（例：男性のみ）")
+    p = st.chat_input("絞り込みの指示を入力（例：2020年以降）")
     if p:
+        # まずユーザーのメッセージを履歴に追加
         st.session_state['messages'].append({"role": "user", "content": p})
+        # 即座に画面に表示（再描画を待たずに表示させる）
+        with st.chat_message("user"):
+            st.write(p)
+            
         with st.chat_message("assistant"):
-            rep = chat_for_filtering(st.session_state['messages'], st.session_state['meta_summary'], st.session_state['gemini_api_key'], llm_model)
-            st.session_state['messages'].append({"role": "assistant", "content": rep})
-            ext = extract_json_parameters(rep)
-            if ext: 
-                st.session_state['filter_params'] = ext
-                st.session_state['readable_filter_summary'] = get_readable_filters(ext, st.session_state['meta_summary'])
-            st.rerun()
+            with st.spinner("AIが条件を検討中..."):
+                rep = chat_for_filtering(st.session_state['messages'], st.session_state['meta_summary'], st.session_state['gemini_api_key'], llm_model)
+                st.write(rep)
+                st.session_state['messages'].append({"role": "assistant", "content": rep})
+                ext = extract_json_parameters(rep)
+                if ext: 
+                    st.session_state['filter_params'] = ext
+                    st.session_state['readable_filter_summary'] = get_readable_filters(ext, st.session_state['meta_summary'])
+                    st.toast("✅ 絞り込み条件を抽出しました")
+                st.rerun()
             
     if st.session_state.get('filter_params'):
         with st.container(border=True):
