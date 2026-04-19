@@ -113,7 +113,11 @@ def setup_analysis_phase(selected_table_id):
         try:
             meta_json = get_meta_info(selected_table_id, app_id=st.session_state['estat_app_id'])
             table_inf = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('TABLE_INF', {})
-            st.session_state['selected_table_name'] = table_inf.get('TITLE', {}).get('$', table_inf.get('STAT_NAME', {}).get('$', 'Unknown'))
+            title_item = table_inf.get('TITLE', table_inf.get('STAT_NAME', 'Unknown'))
+            if isinstance(title_item, dict):
+                st.session_state['selected_table_name'] = title_item.get('$', str(title_item))
+            else:
+                st.session_state['selected_table_name'] = str(title_item)
             raw = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('CLASS_INF', {})
             class_objs = raw.get('CLASS_OBJ', [])
             st.session_state['meta_summary'] = json.dumps(class_objs, ensure_ascii=False)
@@ -150,7 +154,11 @@ def restore_saved_analysis(item):
             st.session_state['dimension_filters'] = item.get('dimension_filters', {})
             meta_json = get_meta_info(item['table_id'], app_id=app_id)
             table_inf = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('TABLE_INF', {})
-            st.session_state['selected_table_name'] = table_inf.get('TITLE', {}).get('$', table_inf.get('STAT_NAME', {}).get('$', 'Unknown'))
+            title_item = table_inf.get('TITLE', table_inf.get('STAT_NAME', 'Unknown'))
+            if isinstance(title_item, dict):
+                st.session_state['selected_table_name'] = title_item.get('$', str(title_item))
+            else:
+                st.session_state['selected_table_name'] = str(title_item)
             raw = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('CLASS_INF', {})
             class_objs = raw.get('CLASS_OBJ', [])
             if isinstance(class_objs, dict): class_objs = [class_objs]
@@ -228,7 +236,13 @@ if not st.session_state.get('chat_mode', False):
             res = search_stats_list(ESTAT_CATEGORIES[sc], st.session_state['estat_app_id'], kw)
             if res: st.session_state['manual_tables'] = res
         if 'manual_tables' in st.session_state:
-            opts = {f"{t.get('TITLE',{}).get('$', t.get('TITLE',''))}": t.get('@id') for t in st.session_state['manual_tables']}
+            # 安全なタイトル抽出による選択肢の生成
+            opts = {}
+            for t in st.session_state['manual_tables']:
+                t_item = t.get('TITLE', '無題')
+                title = t_item.get('$', str(t_item)) if isinstance(t_item, dict) else str(t_item)
+                opts[f"{title} ({t.get('@id', '')})"] = t.get('@id')
+            
             sn = st.selectbox("対象の統計表を選択", list(opts.keys()))
             if st.button("分析を開始"):
                 if setup_analysis_phase(opts[sn]): st.rerun()
