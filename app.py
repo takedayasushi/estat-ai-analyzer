@@ -312,6 +312,8 @@ if st.session_state.get('chat_mode'):
                         st.session_state['filter_params'] = ext
                         st.session_state['readable_filter_summary'] = get_readable_filters(ext, st.session_state['meta_summary'])
                         st.toast("✅ 絞り込み条件を抽出しました")
+                    # 入力欄をクリア
+                    st.session_state['consult_input_area'] = ""
                     st.rerun()
         if col_c2.button("相談をリセット"):
             st.session_state['messages'] = []; st.rerun()
@@ -399,6 +401,8 @@ if st.session_state.get('current_df') is not None:
         if col_q1.button("AIに質問する", type="primary", key="btn_insight_q"):
             if q_p:
                 st.session_state['insight_messages'].append({"role": "user", "content": q_p})
+                # 入力欄をクリア
+                st.session_state['insight_followup_area'] = ""
                 st.rerun()
         if col_q2.button("🔄 解析をリセット", key="btn_insight_reset"):
             st.session_state['last_processed_id'] = ""; st.rerun()
