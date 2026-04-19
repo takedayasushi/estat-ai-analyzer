@@ -16,7 +16,7 @@ from src.api_llm import chat_for_insights, chat_for_filtering, extract_json_para
 from streamlit_local_storage import LocalStorage
 
 # --- Version Info ---
-APP_VERSION = "2026-04-19-1145"
+APP_VERSION = "2026-04-19-1205"
 
 # --- basic configurations ---
 st.set_page_config(page_title=f"e-Stat AI Analyzer v{APP_VERSION}", layout="wide")
@@ -139,8 +139,11 @@ def setup_analysis_phase(selected_table_id):
             st.session_state['filter_params'] = None
             st.session_state['readable_filter_summary'] = ''
             return True
+        except ValueError as ve:
+            st.error(f"⚠️ e-Stat APIエラー: {ve}")
+            return False
         except Exception as e:
-            st.error(f"統計表メタデータ取得エラー: {e}")
+            st.error(f"統計表情報の取得に失敗しました: {e}")
             return False
 
 def restore_saved_analysis(item):
@@ -180,6 +183,9 @@ def restore_saved_analysis(item):
                 if k in st.session_state: del st.session_state[k]
             st.toast("✅ 統計表の分析環境を復元しました")
             return True
+        except ValueError as ve:
+            st.error(f"⚠️ 復元中のAPIエラー: {ve}")
+            return False
         except Exception as e:
             st.error(f"復元失敗: {e}")
             return False
@@ -237,19 +243,25 @@ if not st.session_state.get('chat_mode', False):
         do_manual_search = st.button("統計表を検索") or (kw and kw != st.session_state.get('last_manual_kw_run'))
         if do_manual_search:
             st.session_state['last_manual_kw_run'] = kw
-            res = search_stats_list(ESTAT_CATEGORIES[sc], st.session_state['estat_app_id'], kw)
-            if res: 
-                st.session_state['manual_tables'] = res
-                st.info(f"✅ {len(res)} 件の統計表が見つかりました。")
-            else:
-                st.warning("見つかりませんでした。")
+            try:
+                res = search_stats_list(ESTAT_CATEGORIES[sc], st.session_state['estat_app_id'], kw)
+                if res: 
+                    st.session_state['manual_tables'] = res
+                    st.info(f"✅ {len(res)} 件の統計表が見つかりました。")
+                else:
+                    st.warning("見つかりませんでした。")
+            except ValueError as ve:
+                st.error(f"⚠️ e-Stat APIエラー: {ve}")
+            except Exception as e:
+                st.error(f"検索中にエラーが発生しました: {e}")
+
         if 'manual_tables' in st.session_state:
             opts = {}
             for t in st.session_state['manual_tables']:
                 t_item = t.get('TITLE', '無題')
                 title = t_item.get('$', str(t_item)) if isinstance(t_item, dict) else str(t_item)
                 opts[f"{title} ({t.get('@id', '')})"] = t.get('@id')
-            sn = st.selectbox("対象の統計表を選択", list(opts.keys()))
+            sn = st.selectbox("対象の統計表を選択してください", list(opts.keys()))
             if st.button("この統計表で分析を開始"):
                 if setup_analysis_phase(opts[sn]): st.rerun()
     with t1:
@@ -263,9 +275,16 @@ if not st.session_state.get('chat_mode', False):
                 with st.spinner("AIが最適な統計表を探索中..."):
                     p = generate_search_query(aq, ", ".join(ESTAT_CATEGORIES.keys()), st.session_state['gemini_api_key'], llm_model)
                     if p:
-                        raw = search_stats_list(p['category_id'], st.session_state['estat_app_id'], p.get('search_keyword',''))
-                        recs = recommend_tables_from_list(aq, raw, st.session_state['gemini_api_key'], llm_model)
-                        if recs: st.session_state['ai_recommendations'] = recs
+                        try:
+                            raw = search_stats_list(p['category_id'], st.session_state['estat_app_id'], p.get('search_keyword',''))
+                            recs = recommend_tables_from_list(aq, raw, st.session_state['gemini_api_key'], llm_model)
+                            if recs: st.session_state['ai_recommendations'] = recs
+                        except ValueError as ve:
+                            st.error(f"⚠️ e-Stat APIエラー: {ve}")
+                        except Exception as e:
+                            st.error(f"探索中にエラーが発生しました: {e}")
+            else:
+                st.warning("検索テーマを入力してください。")
         
         if 'ai_recommendations' in st.session_state:
             for rec in st.session_state['ai_recommendations']:
@@ -312,7 +331,6 @@ if st.session_state.get('chat_mode'):
                         st.session_state['filter_params'] = ext
                         st.session_state['readable_filter_summary'] = get_readable_filters(ext, st.session_state['meta_summary'])
                         st.toast("✅ 絞り込み条件を抽出しました")
-                    # 入力欄をクリア
                     st.session_state['consult_input_area'] = ""
                     st.rerun()
         if col_c2.button("相談をリセット"):
@@ -324,19 +342,22 @@ if st.session_state.get('chat_mode'):
             st.markdown(st.session_state.get('readable_filter_summary'))
             if st.button("この条件で統計データを取得/更新 📊", use_container_width=True, type="primary"):
                 with st.spinner("e-Statから最新データを取得中..."):
-                    raw = get_stats_data(st.session_state['selected_table_id_fixed'], st.session_state['estat_app_id'], st.session_state['filter_params'])
-                    df = parse_estat_json_to_dataframe(raw)
-                    if df is not None and not df.empty:
-                        st.session_state['current_df'] = df
-                        # データの種類が変わる可能性があるため、チャート設定を一部リセット
-                        st.session_state['dimension_filters'] = {}
-                        # 分析セッションIDを更新し、AI解析をリセット（自動解析が走るようになる）
-                        st.session_state['active_analysis_id'] = str(uuid.uuid4())
-                        st.session_state['insight_messages'] = []
-                        st.toast("✅ データを更新しました。AIの再解析を開始します。")
-                        st.rerun()
-                    else:
-                        st.error("データの取得に失敗しました。絞り込み条件（カテゴリや地域など）が厳しすぎて該当データがない可能性があります。AIと相談して条件を広げてみてください。")
+                    try:
+                        raw = get_stats_data(st.session_state['selected_table_id_fixed'], st.session_state['estat_app_id'], st.session_state['filter_params'])
+                        df = parse_estat_json_to_dataframe(raw)
+                        if df is not None and not df.empty:
+                            st.session_state['current_df'] = df
+                            st.session_state['dimension_filters'] = {}
+                            st.session_state['active_analysis_id'] = str(uuid.uuid4())
+                            st.session_state['insight_messages'] = []
+                            st.toast("✅ データを更新しました。AIの再解析を開始します。")
+                            st.rerun()
+                        else:
+                            st.error("データの取得に失敗しました。絞り込み条件が厳しすぎる可能性があります。")
+                    except ValueError as ve:
+                        st.error(f"⚠️ e-Stat APIエラー: {ve}")
+                    except Exception as e:
+                        st.error(f"データ取得中にエラーが発生しました: {e}")
 
 if st.session_state.get('current_df') is not None:
     df_b = st.session_state['current_df']
@@ -401,7 +422,6 @@ if st.session_state.get('current_df') is not None:
         if col_q1.button("AIに質問する", type="primary", key="btn_insight_q"):
             if q_p:
                 st.session_state['insight_messages'].append({"role": "user", "content": q_p})
-                # 入力欄をクリア
                 st.session_state['insight_followup_area'] = ""
                 st.rerun()
         if col_q2.button("🔄 解析をリセット", key="btn_insight_reset"):
