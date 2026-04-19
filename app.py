@@ -311,8 +311,6 @@ if st.session_state['current_df'] is not None:
     col_c1, col_c2, col_c3 = st.columns(3)
     with col_c1: x_axis = st.selectbox("X軸 (横軸)", dims, index=dims.index(saved_config.get('x_axis')) if saved_config.get('x_axis') in dims else 0)
     with col_c2: y_axis = st.selectbox("Y軸 (縦軸)", ['value'] + dims, index=0)
-    with col_c3: color_axis = st.selectbox("色分け / 凡例 (次元)", [None] + dims, index=[None] + dims).index(saved_config.get('color_axis')) if saved_config.get('color_axis') in ([None] + dims) else 0)
-    # 上記のindex取得が複雑なので再整理
     available_color_axes = [None] + dims
     current_color = saved_config.get('color_axis')
     c_idx = available_color_axes.index(current_color) if current_color in available_color_axes else 0
