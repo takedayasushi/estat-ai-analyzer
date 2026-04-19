@@ -16,7 +16,7 @@ from src.api_llm import chat_for_insights, chat_for_filtering, extract_json_para
 from streamlit_local_storage import LocalStorage
 
 # --- Version Info ---
-APP_VERSION = "2026-04-19-1000"
+APP_VERSION = "2026-04-19-1010"
 
 # --- basic configurations ---
 st.set_page_config(page_title=f"e-Stat AI Analyzer v{APP_VERSION}", layout="wide")
@@ -39,7 +39,9 @@ INIT_KEYS = {
     'chart_config': {'chart_type': '折れ線', 'x_axis': None, 'y_axis': 'value', 'color_axis': None},
     'dimension_filters': {},
     'active_analysis_id': '', 
-    'last_processed_id': ''
+    'last_processed_id': '',
+    'last_ai_query_run': '',
+    'last_manual_kw_run': ''
 }
 for k, v in INIT_KEYS.items():
     if k not in st.session_state:
@@ -113,7 +115,6 @@ def setup_analysis_phase(selected_table_id):
         try:
             meta_json = get_meta_info(selected_table_id, app_id=st.session_state['estat_app_id'])
             table_inf = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('TABLE_INF', {})
-            # 統計表名の取得 (安全な抽出)
             title_item = table_inf.get('TITLE', table_inf.get('STAT_NAME', 'Unknown'))
             if isinstance(title_item, dict):
                 st.session_state['selected_table_name'] = title_item.get('$', str(title_item))
@@ -155,7 +156,6 @@ def restore_saved_analysis(item):
             st.session_state['dimension_filters'] = item.get('dimension_filters', {})
             meta_json = get_meta_info(item['table_id'], app_id=app_id)
             table_inf = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('TABLE_INF', {})
-            # 統計表名の取得 (安全な抽出)
             title_item = table_inf.get('TITLE', table_inf.get('STAT_NAME', 'Unknown'))
             if isinstance(title_item, dict):
                 st.session_state['selected_table_name'] = title_item.get('$', str(title_item))
@@ -233,8 +233,11 @@ if not st.session_state.get('chat_mode', False):
     t1, t2 = st.tabs(["🤖 AIで統計表を探す", "📚 カテゴリから探す"])
     with t2:
         sc = st.selectbox("統計カテゴリ", list(ESTAT_CATEGORIES.keys()))
-        kw = st.text_input("キーワード (任意)")
-        if st.button("統計表を検索"):
+        kw = st.text_input("キーワード (任意)", key="manual_kw_input")
+        # ボタンクリックまたはEnterキーで検索を実行
+        do_manual_search = st.button("統計表を検索") or (kw and kw != st.session_state.get('last_manual_kw_run'))
+        if do_manual_search:
+            st.session_state['last_manual_kw_run'] = kw
             res = search_stats_list(ESTAT_CATEGORIES[sc], st.session_state['estat_app_id'], kw)
             if res: 
                 st.session_state['manual_tables'] = res
@@ -242,19 +245,21 @@ if not st.session_state.get('chat_mode', False):
             else:
                 st.warning("該当する統計表が見つかりませんでした。条件を変えてお試しください。")
         if 'manual_tables' in st.session_state:
-            # 安全なタイトル抽出による選択肢の生成
             opts = {}
             for t in st.session_state['manual_tables']:
                 t_item = t.get('TITLE', '無題')
                 title = t_item.get('$', str(t_item)) if isinstance(t_item, dict) else str(t_item)
                 opts[f"{title} ({t.get('@id', '')})"] = t.get('@id')
-            sn = st.selectbox("対象の統計表を選択", list(opts.keys()))
+            sn = st.selectbox("対象の統計表を選択してください", list(opts.keys()))
             if st.button("分析を開始"):
                 if setup_analysis_phase(opts[sn]): st.rerun()
     with t1:
         st.write("どんなデータを調べたいか入力してください")
         aq = st.text_input("検索テーマ", placeholder="例：最近の物価指数の傾向", key="ai_search_input")
-        if st.button("AIで統計表を探索 🔍"):
+        # ボタンクリックまたはEnterキーで検索を実行
+        do_ai_search = st.button("AIで統計表を探索 🔍") or (aq and aq != st.session_state.get('last_ai_query_run'))
+        if do_ai_search:
+            st.session_state['last_ai_query_run'] = aq
             if aq:
                 st.session_state['ai_search_query'] = aq
                 with st.spinner("AIが最適な統計表を探索中..."):
@@ -269,7 +274,6 @@ if not st.session_state.get('chat_mode', False):
         if 'ai_recommendations' in st.session_state:
             for rec in st.session_state['ai_recommendations']:
                 with st.container(border=True):
-                    # 🏅 -> 📊 に変更
                     st.subheader(f"📊 {rec.get('title')}")
                     st.caption(f"正式名称: {rec.get('stat_name')}")
                     st.write(f"**理由:** {rec.get('reason')}")
@@ -292,11 +296,10 @@ if st.session_state.get('chat_mode'):
             st.markdown("\n".join(st.session_state['available_columns_details']))
             
     for msg in st.session_state['messages']: st.chat_message(msg["role"]).write(msg["content"])
+    
     p = st.chat_input("絞り込みの指示を入力（例：2020年以降）")
     if p:
-        # まずユーザーのメッセージを履歴に追加
         st.session_state['messages'].append({"role": "user", "content": p})
-        # 即座に画面に表示（再描画を待たずに表示させる）
         with st.chat_message("user"):
             st.write(p)
             
@@ -356,9 +359,7 @@ if st.session_state.get('current_df') is not None:
     with col_c4: color_axis = st.selectbox("色分け (凡例)", available_color_axes, index=c_idx)
     
     if not df_f.empty:
-        # X軸の値で昇順ソート（時系列順にするための処理）
         df_f = df_f.sort_values(by=x_axis)
-        
         st.info(f"💡 現在の表示対象データ: {len(df_f)} 件")
         p_params = {"data_frame": df_f, "x": x_axis, "y": y_axis, "color": color_axis}
         if ct == "棒": fig = px.bar(**p_params)
