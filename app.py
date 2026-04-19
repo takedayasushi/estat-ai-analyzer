@@ -16,7 +16,7 @@ from src.api_llm import chat_for_insights, chat_for_filtering, extract_json_para
 from streamlit_local_storage import LocalStorage
 
 # --- Version Info ---
-APP_VERSION = "2026-04-19-0960"
+APP_VERSION = "2026-04-19-1000"
 
 # --- basic configurations ---
 st.set_page_config(page_title=f"e-Stat AI Analyzer v{APP_VERSION}", layout="wide")
@@ -113,6 +113,7 @@ def setup_analysis_phase(selected_table_id):
         try:
             meta_json = get_meta_info(selected_table_id, app_id=st.session_state['estat_app_id'])
             table_inf = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('TABLE_INF', {})
+            # 統計表名の取得 (安全な抽出)
             title_item = table_inf.get('TITLE', table_inf.get('STAT_NAME', 'Unknown'))
             if isinstance(title_item, dict):
                 st.session_state['selected_table_name'] = title_item.get('$', str(title_item))
@@ -154,6 +155,7 @@ def restore_saved_analysis(item):
             st.session_state['dimension_filters'] = item.get('dimension_filters', {})
             meta_json = get_meta_info(item['table_id'], app_id=app_id)
             table_inf = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('TABLE_INF', {})
+            # 統計表名の取得 (安全な抽出)
             title_item = table_inf.get('TITLE', table_inf.get('STAT_NAME', 'Unknown'))
             if isinstance(title_item, dict):
                 st.session_state['selected_table_name'] = title_item.get('$', str(title_item))
@@ -242,12 +244,11 @@ if not st.session_state.get('chat_mode', False):
                 t_item = t.get('TITLE', '無題')
                 title = t_item.get('$', str(t_item)) if isinstance(t_item, dict) else str(t_item)
                 opts[f"{title} ({t.get('@id', '')})"] = t.get('@id')
-            
             sn = st.selectbox("対象の統計表を選択", list(opts.keys()))
             if st.button("分析を開始"):
                 if setup_analysis_phase(opts[sn]): st.rerun()
     with t1:
-        st.write("どんなデータを調べたいか入力してください（例：日本の人口推移）")
+        st.write("どんなデータを調べたいか入力してください")
         aq = st.text_input("検索テーマ", placeholder="例：最近の物価指数の傾向", key="ai_search_input")
         if st.button("AIで統計表を探索 🔍"):
             if aq:
@@ -264,7 +265,8 @@ if not st.session_state.get('chat_mode', False):
         if 'ai_recommendations' in st.session_state:
             for rec in st.session_state['ai_recommendations']:
                 with st.container(border=True):
-                    st.subheader(f"🏅 {rec.get('title')}")
+                    # 🏅 -> 📊 に変更
+                    st.subheader(f"📊 {rec.get('title')}")
                     st.write(f"**理由:** {rec.get('reason')}")
                     if st.button("分析を開始", key=f"ais_btn_{rec.get('id')}"):
                         if setup_analysis_phase(rec.get('id')): st.rerun()
@@ -285,8 +287,6 @@ if st.session_state.get('chat_mode'):
             st.markdown("\n".join(st.session_state['available_columns_details']))
             
     for msg in st.session_state['messages']: st.chat_message(msg["role"]).write(msg["content"])
-    
-    # 分析中の絞り込み指示は chat_input を使用（画面最下部に表示される）
     p = st.chat_input("絞り込みの指示を入力（例：男性のみ）")
     if p:
         st.session_state['messages'].append({"role": "user", "content": p})
@@ -343,6 +343,9 @@ if st.session_state.get('current_df') is not None:
     with col_c4: color_axis = st.selectbox("色分け (凡例)", available_color_axes, index=c_idx)
     
     if not df_f.empty:
+        # X軸の値で昇順ソート（時系列順にするための処理）
+        df_f = df_f.sort_values(by=x_axis)
+        
         st.info(f"💡 現在の表示対象データ: {len(df_f)} 件")
         p_params = {"data_frame": df_f, "x": x_axis, "y": y_axis, "color": color_axis}
         if ct == "棒": fig = px.bar(**p_params)
@@ -367,7 +370,7 @@ if st.session_state.get('current_df') is not None:
     t_input = st.text_input("保存タイトル", value=f"分析: {datetime.datetime.now().strftime('%m/%d %H:%M')}")
     col_s1, col_s2 = st.columns(2)
     curr_cfg = {"chart_type": ct, "x_axis": x_axis, "y_axis": y_axis, "color_axis": color_axis}
-    if col_s1.button("💾 ブックマークに保存"):
+    if col_s1.button("💾 マイ・ブックマークに保存"):
         item = {
             "title": t_input, "table_id": st.session_state['selected_table_id_fixed'],
             "filter_params": st.session_state['filter_params'], "insight_messages": [], 

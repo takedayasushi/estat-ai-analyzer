@@ -183,10 +183,11 @@ def recommend_tables_from_list(user_intent: str, tables: list, api_key: str, mod
 必ず以下のフォーマットのJSONのリスト（配列）を出力してください。
 ```json
 [
-  {{
+  {
     "id": "抽出した表のid",
+    "title": "統計表の正式タイトル",
     "reason": "なぜこの表が目的に一番合致しているか、ユーザーへの推薦コメント（日本語で簡潔に）"
-  }}
+  }
 ]
 ```
 """
