@@ -321,9 +321,20 @@ if st.session_state.get('chat_mode'):
             st.write("**現在の絞り込み条件:**")
             st.markdown(st.session_state.get('readable_filter_summary'))
             if st.button("この条件で統計データを取得/更新 📊", use_container_width=True, type="primary"):
-                raw = get_stats_data(st.session_state['selected_table_id_fixed'], st.session_state['estat_app_id'], st.session_state['filter_params'])
-                df = parse_estat_json_to_dataframe(raw)
-                if df is not None: st.session_state['current_df'] = df; st.rerun()
+                with st.spinner("e-Statから最新データを取得中..."):
+                    raw = get_stats_data(st.session_state['selected_table_id_fixed'], st.session_state['estat_app_id'], st.session_state['filter_params'])
+                    df = parse_estat_json_to_dataframe(raw)
+                    if df is not None and not df.empty:
+                        st.session_state['current_df'] = df
+                        # データの種類が変わる可能性があるため、チャート設定を一部リセット
+                        st.session_state['dimension_filters'] = {}
+                        # 分析セッションIDを更新し、AI解析をリセット（自動解析が走るようになる）
+                        st.session_state['active_analysis_id'] = str(uuid.uuid4())
+                        st.session_state['insight_messages'] = []
+                        st.toast("✅ データを更新しました。AIの再解析を開始します。")
+                        st.rerun()
+                    else:
+                        st.error("データの取得に失敗しました。絞り込み条件（カテゴリや地域など）が厳しすぎて該当データがない可能性があります。AIと相談して条件を広げてみてください。")
 
 if st.session_state.get('current_df') is not None:
     df_b = st.session_state['current_df']
