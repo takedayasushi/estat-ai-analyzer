@@ -271,6 +271,7 @@ if not st.session_state.get('chat_mode', False):
                 with st.container(border=True):
                     # 🏅 -> 📊 に変更
                     st.subheader(f"📊 {rec.get('title')}")
+                    st.caption(f"正式名称: {rec.get('stat_name')}")
                     st.write(f"**理由:** {rec.get('reason')}")
                     if st.button("分析を開始", key=f"ais_btn_{rec.get('id')}"):
                         if setup_analysis_phase(rec.get('id')): st.rerun()

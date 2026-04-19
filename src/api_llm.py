@@ -185,7 +185,8 @@ def recommend_tables_from_list(user_intent: str, tables: list, api_key: str, mod
 [
   {{
     "id": "抽出した表のid",
-    "title": "統計表の正式タイトル",
+    "title": "ユーザーに分かりやすい要約タイトル",
+    "stat_name": "e-Stat上の正式な統計名称",
     "reason": "なぜこの表が目的に一番合致しているか、ユーザーへの推薦コメント（日本語で簡潔に）"
   }}
 ]
