@@ -309,11 +309,23 @@ if st.session_state['current_df'] is not None:
     saved_config = st.session_state['chart_config']
     
     col_c1, col_c2, col_c3 = st.columns(3)
-    with col_c1: x_axis = st.selectbox("X軸 (横軸)", dims, index=dims.index(saved_config.get('x_axis')) if saved_config.get('x_axis') in dims else 0)
-    with col_c2: y_axis = st.selectbox("Y軸 (縦軸)", ['value'] + dims, index=0)
+    
+    # X軸の復元
+    x_opts = dims
+    saved_x = saved_config.get('x_axis')
+    x_idx = x_opts.index(saved_x) if saved_x in x_opts else 0
+    with col_c1: x_axis = st.selectbox("X軸 (横軸)", x_opts, index=x_idx)
+    
+    # Y軸の復元
+    y_opts = ['value'] + dims
+    saved_y = saved_config.get('y_axis', 'value')
+    y_idx = y_opts.index(saved_y) if saved_y in y_opts else 0
+    with col_c2: y_axis = st.selectbox("Y軸 (縦軸)", y_opts, index=y_idx)
+    
+    # 色分けの復元
     available_color_axes = [None] + dims
-    current_color = saved_config.get('color_axis')
-    c_idx = available_color_axes.index(current_color) if current_color in available_color_axes else 0
+    saved_color = saved_config.get('color_axis')
+    c_idx = available_color_axes.index(saved_color) if saved_color in available_color_axes else 0
     with col_c3: color_axis = st.selectbox("色分け / 凡例 (次元)", available_color_axes, index=c_idx)
         
     st.write("**詳細フィルタ（手動での絞り込み）:**")
