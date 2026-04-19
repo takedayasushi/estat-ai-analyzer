@@ -16,7 +16,7 @@ from src.api_llm import chat_for_insights, chat_for_filtering, extract_json_para
 from streamlit_local_storage import LocalStorage
 
 # --- Version Info ---
-APP_VERSION = "2026-04-19-1010"
+APP_VERSION = "2026-04-19-1145"
 
 # --- basic configurations ---
 st.set_page_config(page_title=f"e-Stat AI Analyzer v{APP_VERSION}", layout="wide")
@@ -234,29 +234,27 @@ if not st.session_state.get('chat_mode', False):
     with t2:
         sc = st.selectbox("統計カテゴリ", list(ESTAT_CATEGORIES.keys()))
         kw = st.text_input("キーワード (任意)", key="manual_kw_input")
-        # ボタンクリックまたはEnterキーで検索を実行
         do_manual_search = st.button("統計表を検索") or (kw and kw != st.session_state.get('last_manual_kw_run'))
         if do_manual_search:
             st.session_state['last_manual_kw_run'] = kw
             res = search_stats_list(ESTAT_CATEGORIES[sc], st.session_state['estat_app_id'], kw)
             if res: 
                 st.session_state['manual_tables'] = res
-                st.info(f"✅ {len(res)} 件の統計表が見つかりました。下のリストから選択してください。")
+                st.info(f"✅ {len(res)} 件の統計表が見つかりました。")
             else:
-                st.warning("該当する統計表が見つかりませんでした。条件を変えてお試しください。")
+                st.warning("見つかりませんでした。")
         if 'manual_tables' in st.session_state:
             opts = {}
             for t in st.session_state['manual_tables']:
                 t_item = t.get('TITLE', '無題')
                 title = t_item.get('$', str(t_item)) if isinstance(t_item, dict) else str(t_item)
                 opts[f"{title} ({t.get('@id', '')})"] = t.get('@id')
-            sn = st.selectbox("対象の統計表を選択してください", list(opts.keys()))
-            if st.button("分析を開始"):
+            sn = st.selectbox("対象の統計表を選択", list(opts.keys()))
+            if st.button("この統計表で分析を開始"):
                 if setup_analysis_phase(opts[sn]): st.rerun()
     with t1:
         st.write("どんなデータを調べたいか入力してください")
-        aq = st.text_input("検索テーマ", placeholder="例：最近の物価指数の傾向", key="ai_search_input")
-        # ボタンクリックまたはEnterキーで検索を実行
+        aq = st.text_input("検索テーマ", placeholder="例：日本の人口推移", key="ai_search_input")
         do_ai_search = st.button("AIで統計表を探索 🔍") or (aq and aq != st.session_state.get('last_ai_query_run'))
         if do_ai_search:
             st.session_state['last_ai_query_run'] = aq
@@ -268,8 +266,6 @@ if not st.session_state.get('chat_mode', False):
                         raw = search_stats_list(p['category_id'], st.session_state['estat_app_id'], p.get('search_keyword',''))
                         recs = recommend_tables_from_list(aq, raw, st.session_state['gemini_api_key'], llm_model)
                         if recs: st.session_state['ai_recommendations'] = recs
-            else:
-                st.warning("検索テーマを入力してください。")
         
         if 'ai_recommendations' in st.session_state:
             for rec in st.session_state['ai_recommendations']:
@@ -282,7 +278,12 @@ if not st.session_state.get('chat_mode', False):
 
 # --- Analysis Phase ---
 if st.session_state.get('chat_mode'):
-    st.info(f"📍 **分析中:** {st.session_state.get('selected_table_name')} (ID: {st.session_state.get('selected_table_id_fixed')})")
+    col_t1, col_t2 = st.columns([8, 2])
+    col_t1.info(f"📍 **分析中:** {st.session_state.get('selected_table_name')} (ID: {st.session_state.get('selected_table_id_fixed')})")
+    if col_t2.button("🔄 別の統計表を選ぶ", use_container_width=True):
+        for k in ['chat_mode', 'messages', 'insight_messages', 'current_df', 'filter_params']: del st.session_state[k]
+        st.rerun()
+
     if st.session_state['active_analysis_id'] != st.session_state['last_processed_id']:
         st.session_state['last_processed_id'] = st.session_state['active_analysis_id']
         now = datetime.datetime.now().strftime("%H:%M:%S")
@@ -291,35 +292,35 @@ if st.session_state.get('chat_mode'):
     
     st.divider()
     st.subheader("💬 データの絞り込み相談")
-    if st.session_state.get('available_columns_details'):
-        with st.expander("📋 統計表の構成を見る", expanded=False):
-            st.markdown("\n".join(st.session_state['available_columns_details']))
-            
-    for msg in st.session_state['messages']: st.chat_message(msg["role"]).write(msg["content"])
-    
-    p = st.chat_input("絞り込みの指示を入力（例：2020年以降）")
-    if p:
-        st.session_state['messages'].append({"role": "user", "content": p})
-        with st.chat_message("user"):
-            st.write(p)
-            
-        with st.chat_message("assistant"):
-            with st.spinner("AIが条件を検討中..."):
-                rep = chat_for_filtering(st.session_state['messages'], st.session_state['meta_summary'], st.session_state['gemini_api_key'], llm_model)
-                st.write(rep)
-                st.session_state['messages'].append({"role": "assistant", "content": rep})
-                ext = extract_json_parameters(rep)
-                if ext: 
-                    st.session_state['filter_params'] = ext
-                    st.session_state['readable_filter_summary'] = get_readable_filters(ext, st.session_state['meta_summary'])
-                    st.toast("✅ 絞り込み条件を抽出しました")
-                st.rerun()
+    with st.container(border=True):
+        if st.session_state.get('available_columns_details'):
+            with st.expander("📋 統計表の構成（軸）を見る", expanded=False):
+                st.markdown("\n".join(st.session_state['available_columns_details']))
+        
+        for msg in st.session_state['messages']: st.chat_message(msg["role"]).write(msg["content"])
+        
+        c_p = st.text_area("絞り込みの相談（例：2020年以降、東京都のみ、など）", key="consult_input_area")
+        col_c1, col_c2 = st.columns([2, 8])
+        if col_c1.button("AIに相談する", type="primary"):
+            if c_p:
+                st.session_state['messages'].append({"role": "user", "content": c_p})
+                with st.spinner("AIが条件を検討中..."):
+                    rep = chat_for_filtering(st.session_state['messages'], st.session_state['meta_summary'], st.session_state['gemini_api_key'], llm_model)
+                    st.session_state['messages'].append({"role": "assistant", "content": rep})
+                    ext = extract_json_parameters(rep)
+                    if ext: 
+                        st.session_state['filter_params'] = ext
+                        st.session_state['readable_filter_summary'] = get_readable_filters(ext, st.session_state['meta_summary'])
+                        st.toast("✅ 絞り込み条件を抽出しました")
+                    st.rerun()
+        if col_c2.button("相談をリセット"):
+            st.session_state['messages'] = []; st.rerun()
             
     if st.session_state.get('filter_params'):
         with st.container(border=True):
             st.write("**現在の絞り込み条件:**")
             st.markdown(st.session_state.get('readable_filter_summary'))
-            if st.button("統計データを取得/更新 📊"):
+            if st.button("この条件で統計データを取得/更新 📊", use_container_width=True, type="primary"):
                 raw = get_stats_data(st.session_state['selected_table_id_fixed'], st.session_state['estat_app_id'], st.session_state['filter_params'])
                 df = parse_estat_json_to_dataframe(raw)
                 if df is not None: st.session_state['current_df'] = df; st.rerun()
@@ -331,7 +332,7 @@ if st.session_state.get('current_df') is not None:
     dims = [c for c in df_b.columns if c not in ['value', 'unit']]
     saved_config = st.session_state.get('chart_config', {})
     
-    st.write("**詳細フィルタ（手動での絞り込み）:**")
+    st.write("**表示対象の選択（手動フィルタ）:**")
     filters = {}
     if dims:
         fcols = st.columns(min(len(dims), 3))
@@ -360,7 +361,6 @@ if st.session_state.get('current_df') is not None:
     
     if not df_f.empty:
         df_f = df_f.sort_values(by=x_axis)
-        st.info(f"💡 現在の表示対象データ: {len(df_f)} 件")
         p_params = {"data_frame": df_f, "x": x_axis, "y": y_axis, "color": color_axis}
         if ct == "棒": fig = px.bar(**p_params)
         elif ct == "円": fig = px.pie(df_f, names=x_axis, values=y_axis, color=color_axis)
@@ -370,8 +370,10 @@ if st.session_state.get('current_df') is not None:
 
     st.divider()
     st.subheader("💡 AIアナリストの解析レポート")
-    if st.button("🔄 この状態で再解析"): st.session_state['last_processed_id'] = ""; st.rerun()
-    for m in st.session_state.get('insight_messages', []): st.chat_message(m["role"]).write(m["content"])
+    for m in st.session_state.get('insight_messages', []):
+        if m["role"] == "user" and "【解析リクエスト" in m["content"]: continue
+        st.chat_message(m["role"]).write(m["content"])
+    
     if st.session_state.get('insight_messages') and st.session_state['insight_messages'][-1]["role"] == "user":
         with st.status("AI解析中...") as status:
             summary = f"表示データ: {len(df_f)}件\nX={x_axis}, Y={y_axis}, 色={color_axis}\nサンプル:\n{df_f.head(10).to_string()}"
@@ -380,11 +382,21 @@ if st.session_state.get('current_df') is not None:
             status.update(label="✅ 解析完了", state="complete")
             st.rerun()
 
+    with st.container(border=True):
+        q_p = st.text_area("AIへの追加質問（例：このトレンドの要因は何と考えられますか？）", key="insight_followup_area")
+        col_q1, col_q2 = st.columns([2, 8])
+        if col_q1.button("AIに質問する", type="primary", key="btn_insight_q"):
+            if q_p:
+                st.session_state['insight_messages'].append({"role": "user", "content": q_p})
+                st.rerun()
+        if col_q2.button("🔄 解析をリセット", key="btn_insight_reset"):
+            st.session_state['last_processed_id'] = ""; st.rerun()
+
     st.divider()
     t_input = st.text_input("保存タイトル", value=f"分析: {datetime.datetime.now().strftime('%m/%d %H:%M')}")
     col_s1, col_s2 = st.columns(2)
     curr_cfg = {"chart_type": ct, "x_axis": x_axis, "y_axis": y_axis, "color_axis": color_axis}
-    if col_s1.button("💾 マイ・ブックマークに保存"):
+    if col_s1.button("💾 マイ・ブックマークに保存", use_container_width=True):
         item = {
             "title": t_input, "table_id": st.session_state['selected_table_id_fixed'],
             "filter_params": st.session_state['filter_params'], "insight_messages": [], 
@@ -392,7 +404,7 @@ if st.session_state.get('current_df') is not None:
         }
         l = json.loads(localS.getItem("estat_my_bookmarks") or "[]")
         l.append(item); localS.setItem("estat_my_bookmarks", json.dumps(l, ensure_ascii=False)); st.rerun()
-    if col_s2.button("🌍 全体ギャラリーに共有"):
+    if col_s2.button("🌍 全体ギャラリーに共有", use_container_width=True):
         item = {
             "title": t_input, "table_id": st.session_state['selected_table_id_fixed'],
             "filter_params": st.session_state['filter_params'], "insight_messages": [], 
