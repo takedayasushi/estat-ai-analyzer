@@ -16,10 +16,10 @@ from src.api_llm import chat_for_insights, chat_for_filtering, extract_json_para
 from streamlit_local_storage import LocalStorage
 
 # --- Version Info ---
-APP_VERSION = "2026-04-19-1205"
+APP_VERSION = "2026-04-19-1208"
 
 # --- basic configurations ---
-st.set_page_config(page_title=f"e-Stat AI Analyzer v{APP_VERSION}", layout="wide")
+st.set_page_config(page_title="📊 e-Stat AI Analyzer", layout="wide")
 localS = LocalStorage()
 
 # --- State Initialization ---
@@ -41,7 +41,9 @@ INIT_KEYS = {
     'active_analysis_id': '', 
     'last_processed_id': '',
     'last_ai_query_run': '',
-    'last_manual_kw_run': ''
+    'last_manual_kw_run': '',
+    'clear_consult_flag': False,
+    'clear_insight_flag': False
 }
 for k, v in INIT_KEYS.items():
     if k not in st.session_state:
@@ -320,6 +322,11 @@ if st.session_state.get('chat_mode'):
         
         for msg in st.session_state['messages']: st.chat_message(msg["role"]).write(msg["content"])
         
+        # Safe clear for consultation input
+        if st.session_state.get('clear_consult_flag'):
+            st.session_state['consult_input_area'] = ""
+            st.session_state['clear_consult_flag'] = False
+            
         c_p = st.text_area("絞り込みの相談（例：2020年以降、東京都のみ、など）", key="consult_input_area")
         col_c1, col_c2 = st.columns([2, 8])
         if col_c1.button("AIに相談する", type="primary"):
@@ -333,7 +340,7 @@ if st.session_state.get('chat_mode'):
                         st.session_state['filter_params'] = ext
                         st.session_state['readable_filter_summary'] = get_readable_filters(ext, st.session_state['meta_summary'])
                         st.toast("✅ 絞り込み条件を抽出しました")
-                    st.session_state['consult_input_area'] = ""
+                    st.session_state['clear_consult_flag'] = True
                     st.rerun()
         if col_c2.button("相談をリセット"):
             st.session_state['messages'] = []; st.rerun()
@@ -419,12 +426,17 @@ if st.session_state.get('current_df') is not None:
             st.rerun()
 
     with st.container(border=True):
+        # Safe clear for insight input
+        if st.session_state.get('clear_insight_flag'):
+            st.session_state['insight_followup_area'] = ""
+            st.session_state['clear_insight_flag'] = False
+            
         q_p = st.text_area("AIへの追加質問（例：このトレンドの要因は何と考えられますか？）", key="insight_followup_area")
         col_q1, col_q2 = st.columns([2, 8])
         if col_q1.button("AIに質問する", type="primary", key="btn_insight_q"):
             if q_p:
                 st.session_state['insight_messages'].append({"role": "user", "content": q_p})
-                st.session_state['insight_followup_area'] = ""
+                st.session_state['clear_insight_flag'] = True
                 st.rerun()
         if col_q2.button("🔄 解析をリセット", key="btn_insight_reset"):
             st.session_state['last_processed_id'] = ""; st.rerun()
