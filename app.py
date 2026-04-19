@@ -191,7 +191,7 @@ def restore_saved_analysis(item):
             return False
 
 # --- UI Setup ---
-st.title(f"📊 e-Stat AI Analyzer (v{APP_VERSION})")
+st.title("📊 e-Stat AI Analyzer")
 st.markdown("AIが政府統計の総合窓口(e-Stat)の**統計表の検索・絞り込み・可視化・インサイト分析**をサポートします。")
 
 # --- Sidebar UI ---
@@ -233,6 +233,8 @@ with st.sidebar.expander("🔖 マイ・ブックマーク", expanded=True):
             if restore_saved_analysis(item): st.rerun()
         if col_d.button("🗑️", key=f"ld_btn_{i}"):
             bs.pop(len(bs)-1-i); localS.setItem("estat_my_bookmarks", json.dumps(bs, ensure_ascii=False)); st.rerun()
+
+st.sidebar.caption(f"App Version: {APP_VERSION}")
 
 # --- Search Phase ---
 if not st.session_state.get('chat_mode', False):
