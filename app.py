@@ -16,7 +16,7 @@ from src.api_llm import chat_for_insights, chat_for_filtering, extract_json_para
 from streamlit_local_storage import LocalStorage
 
 # --- Version Info ---
-APP_VERSION = "2026-04-19-0940"
+APP_VERSION = "2026-04-19-0935"
 
 # --- basic configurations ---
 st.set_page_config(page_title=f"e-Stat AI Analyzer v{APP_VERSION}", layout="wide")
@@ -85,7 +85,6 @@ def get_readable_filters(filter_params, meta_summary_json):
     try:
         class_objs = json.loads(meta_summary_json)
         if isinstance(class_objs, dict): class_objs = [class_objs]
-        
         readable = []
         for key, code in filter_params.items():
             dim_name = key
@@ -115,11 +114,9 @@ def setup_analysis_phase(selected_table_id):
             meta_json = get_meta_info(selected_table_id, app_id=st.session_state['estat_app_id'])
             table_inf = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('TABLE_INF', {})
             st.session_state['selected_table_name'] = table_inf.get('TITLE', {}).get('$', table_inf.get('STAT_NAME', {}).get('$', 'Unknown'))
-            
             raw = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('CLASS_INF', {})
             class_objs = raw.get('CLASS_OBJ', [])
             st.session_state['meta_summary'] = json.dumps(class_objs, ensure_ascii=False)
-            
             if isinstance(class_objs, dict): class_objs = [class_objs]
             details = []
             for obj in class_objs:
@@ -129,7 +126,6 @@ def setup_analysis_phase(selected_table_id):
                 ex = "、".join([str(c.get('@name','')) for c in cl_list[:3]])
                 details.append(f"・**{name}** (例: {ex}{' など' if len(cl_list)>3 else ''})")
             st.session_state['available_columns_details'] = details
-            
             st.session_state['selected_table_id_fixed'] = selected_table_id
             st.session_state['chat_mode'] = True
             st.session_state['active_analysis_id'] = str(uuid.uuid4())
@@ -146,18 +142,15 @@ def restore_saved_analysis(item):
     if not app_id: 
         st.error("API設定が必要です。")
         return False
-        
     with st.spinner("🔄 統計表の分析レシピを復元中..."):
         try:
             st.session_state['selected_table_id_fixed'] = item['table_id']
             st.session_state['filter_params'] = item['filter_params']
             st.session_state['chart_config'] = item.get('chart_config', {'chart_type': '折れ線', 'x_axis': None, 'y_axis': 'value', 'color_axis': None})
             st.session_state['dimension_filters'] = item.get('dimension_filters', {})
-            
             meta_json = get_meta_info(item['table_id'], app_id=app_id)
             table_inf = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('TABLE_INF', {})
             st.session_state['selected_table_name'] = table_inf.get('TITLE', {}).get('$', table_inf.get('STAT_NAME', {}).get('$', 'Unknown'))
-            
             raw = meta_json.get('GET_META_INFO', {}).get('METADATA_INF', {}).get('CLASS_INF', {})
             class_objs = raw.get('CLASS_OBJ', [])
             if isinstance(class_objs, dict): class_objs = [class_objs]
@@ -166,20 +159,15 @@ def restore_saved_analysis(item):
                 details.append(f"・**{obj.get('@name', 'Unknown')}**")
             st.session_state['available_columns_details'] = details
             st.session_state['meta_summary'] = json.dumps(class_objs, ensure_ascii=False)
-            
             st.session_state['readable_filter_summary'] = get_readable_filters(item['filter_params'], st.session_state['meta_summary'])
-
             raw_json = get_stats_data(item['table_id'], app_id=app_id, filter_params=item['filter_params'])
             df = parse_estat_json_to_dataframe(raw_json)
             if df is not None:
                 st.session_state['current_df'] = df
-            
             st.session_state['active_analysis_id'] = str(uuid.uuid4())
             st.session_state['chat_mode'] = True
-            
             for k in ['manual_tables', 'ai_recommendations', 'ai_search_query']:
                 if k in st.session_state: del st.session_state[k]
-
             st.toast("✅ 統計表の分析環境を復元しました")
             return True
         except Exception as e:
@@ -212,7 +200,7 @@ llm_model = st.sidebar.selectbox("分析用AIモデル", models if models else [
 st.sidebar.divider()
 is_admin = st.query_params.get("admin") == "true"
 with st.sidebar.expander("🌍 共有ギャラリー", expanded=False):
-    if not global_gallery: st.caption("（現在、共有されている統計表はありません）")
+    if not global_gallery: st.caption("（現在共有なし）")
     for i, item in enumerate(reversed(global_gallery)):
         if st.button(f"🔗 {item.get('title')}", key=f"g_btn_{i}"):
             if restore_saved_analysis(item): st.rerun()
@@ -224,7 +212,7 @@ with st.sidebar.expander("🔖 マイ・ブックマーク", expanded=True):
     try:
         bs = json.loads(localS.getItem("estat_my_bookmarks") or "[]")
     except: bs = []
-    if not bs: st.caption("（ブックマークされた統計表はありません）")
+    if not bs: st.caption("（ブックマークなし）")
     for i, item in enumerate(reversed(bs)):
         col_b, col_d = st.columns([4, 1])
         if col_b.button(f"📄 {item.get('title','無題')}", key=f"l_btn_{i}"):
@@ -243,14 +231,14 @@ if not st.session_state['chat_mode']:
             if res: st.session_state['manual_tables'] = res
         if 'manual_tables' in st.session_state:
             opts = {f"{t.get('TITLE',{}).get('$', t.get('TITLE',''))}": t.get('@id') for t in st.session_state['manual_tables']}
-            sn = st.selectbox("対象の統計表を選択してください", list(opts.keys()))
-            if st.button("この統計表で分析を開始"):
+            sn = st.selectbox("統計表を選択", list(opts.keys()))
+            if st.button("分析を開始"):
                 if setup_analysis_phase(opts[sn]): st.rerun()
     with t1:
-        aq = st.chat_input("調べたい統計テーマを入力してください（例：日本の労働力調査の推移）")
+        aq = st.chat_input("調べたい統計テーマを入力")
         if aq:
             st.session_state['ai_search_query'] = aq
-            with st.spinner("AIが最適な統計表を探索中..."):
+            with st.spinner("AI探索中..."):
                 p = generate_search_query(aq, ", ".join(ESTAT_CATEGORIES.keys()), st.session_state['gemini_api_key'], llm_model)
                 if p:
                     raw = search_stats_list(p['category_id'], st.session_state['estat_app_id'], p.get('search_keyword',''))
@@ -260,27 +248,24 @@ if not st.session_state['chat_mode']:
             for rec in st.session_state['ai_recommendations']:
                 with st.container(border=True):
                     st.subheader(f"🏅 {rec.get('title')}")
-                    if st.button("この統計表で分析を開始", key=f"ais_btn_{rec.get('id')}"):
+                    if st.button("この統計表で分析開始", key=f"ais_btn_{rec.get('id')}"):
                         if setup_analysis_phase(rec.get('id')): st.rerun()
 
 # --- Analysis Phase ---
 if st.session_state['chat_mode']:
-    st.info(f"📍 **分析中の対象:** {st.session_state['selected_table_name']} (ID: {st.session_state['selected_table_id_fixed']})")
-    
+    st.info(f"📍 **分析中:** {st.session_state['selected_table_name']} (ID: {st.session_state['selected_table_id_fixed']})")
     if st.session_state['active_analysis_id'] != st.session_state['last_processed_id']:
         st.session_state['last_processed_id'] = st.session_state['active_analysis_id']
         now = datetime.datetime.now().strftime("%H:%M:%S")
-        st.session_state['insight_messages'] = [{"role": "user", "content": f"【解析リクエスト: {now}】この統計表のデータトレンドとインサイトを分析してください。"}]
+        st.session_state['insight_messages'] = [{"role": "user", "content": f"【解析リクエスト: {now}】データ解析をお願いします。"}]
         st.rerun()
-
     st.divider()
     st.subheader("💬 データの絞り込み相談")
     if st.session_state['available_columns_details']:
-        with st.expander("📋 統計表の構成（標章項目や次元）を確認する", expanded=False):
+        with st.expander("📋 統計表の構成を見る", expanded=False):
             st.markdown("\n".join(st.session_state['available_columns_details']))
-        
     for msg in st.session_state['messages']: st.chat_message(msg["role"]).write(msg["content"])
-    p = st.chat_input("絞り込みの指示を入力してください（例：男性のみ、2020年以降）")
+    p = st.chat_input("絞り込み（例：2020年以降、男性のみ）")
     if p:
         st.session_state['messages'].append({"role": "user", "content": p})
         with st.chat_message("assistant"):
@@ -291,12 +276,11 @@ if st.session_state['chat_mode']:
                 st.session_state['filter_params'] = ext
                 st.session_state['readable_filter_summary'] = get_readable_filters(ext, st.session_state['meta_summary'])
             st.rerun()
-
     if st.session_state['filter_params']:
         with st.container(border=True):
-            st.write("**現在の絞り込み条件（AI抽出）:**")
+            st.write("**現在の絞り込み条件:**")
             st.markdown(st.session_state['readable_filter_summary'])
-            if st.button("上記条件で統計データを取得/更新 📊"):
+            if st.button("統計データを取得/更新 📊"):
                 raw = get_stats_data(st.session_state['selected_table_id_fixed'], st.session_state['estat_app_id'], st.session_state['filter_params'])
                 df = parse_estat_json_to_dataframe(raw)
                 if df is not None: st.session_state['current_df'] = df; st.rerun()
@@ -308,26 +292,7 @@ if st.session_state['current_df'] is not None:
     dims = [c for c in df_b.columns if c not in ['value', 'unit']]
     saved_config = st.session_state['chart_config']
     
-    col_c1, col_c2, col_c3 = st.columns(3)
-    
-    # X軸の復元
-    x_opts = dims
-    saved_x = saved_config.get('x_axis')
-    x_idx = x_opts.index(saved_x) if saved_x in x_opts else 0
-    with col_c1: x_axis = st.selectbox("X軸 (横軸)", x_opts, index=x_idx)
-    
-    # Y軸の復元
-    y_opts = ['value'] + dims
-    saved_y = saved_config.get('y_axis', 'value')
-    y_idx = y_opts.index(saved_y) if saved_y in y_opts else 0
-    with col_c2: y_axis = st.selectbox("Y軸 (縦軸)", y_opts, index=y_idx)
-    
-    # 色分けの復元
-    available_color_axes = [None] + dims
-    saved_color = saved_config.get('color_axis')
-    c_idx = available_color_axes.index(saved_color) if saved_color in available_color_axes else 0
-    with col_c3: color_axis = st.selectbox("色分け / 凡例 (次元)", available_color_axes, index=c_idx)
-        
+    # --- 1. 次元フィルタ（手動での絞り込み）を上に移動 ---
     st.write("**詳細フィルタ（手動での絞り込み）:**")
     filters = {}
     if dims:
@@ -343,10 +308,20 @@ if st.session_state['current_df'] is not None:
         if v: df_f = df_f[df_f[d].isin(v)]
     if df_f.empty and not df_b.empty: df_f = df_b.head(50)
 
-    # Rendering chart
+    # --- 2. グラフの種類・軸設定をまとめる ---
+    st.markdown("---")
+    st.write("**グラフ構成:**")
+    col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+    # 種類の選択
     c_opts = ["折れ線", "棒", "円", "散布図"]
-    current_ct = saved_config.get('chart_type', "折れ線")
-    ct = st.selectbox("グラフの種類", c_opts, index=c_opts.index(current_ct) if current_ct in c_opts else 0)
+    with col_c1: ct = st.selectbox("グラフの種類", c_opts, index=c_opts.index(saved_config.get('chart_type', "折れ線")) if saved_config.get('chart_type') in c_opts else 0)
+    # 軸の選択
+    with col_c2: x_axis = st.selectbox("X軸 (横軸)", dims, index=dims.index(saved_config.get('x_axis')) if saved_config.get('x_axis') in dims else 0)
+    with col_c3: y_axis = st.selectbox("Y軸 (縦軸)", ['value'] + dims, index=(['value'] + dims).index(saved_config.get('y_axis', 'value')) if saved_config.get('y_axis', 'value') in (['value'] + dims) else 0)
+    # 色分け
+    available_color_axes = [None] + dims
+    c_idx = available_color_axes.index(saved_config.get('color_axis')) if saved_config.get('color_axis') in available_color_axes else 0
+    with col_c4: color_axis = st.selectbox("色分け (凡例)", available_color_axes, index=c_idx)
     
     if not df_f.empty:
         st.info(f"💡 現在の表示対象データ: {len(df_f)} 件")
@@ -361,34 +336,34 @@ if st.session_state['current_df'] is not None:
     st.divider()
     st.subheader("💡 AIアナリストの解析レポート")
     if st.button("🔄 この状態で再解析"): st.session_state['last_processed_id'] = ""; st.rerun()
-
     for m in st.session_state['insight_messages']: st.chat_message(m["role"]).write(m["content"])
-    
     if st.session_state['insight_messages'] and st.session_state['insight_messages'][-1]["role"] == "user":
-        with st.spinner("AIが統計トレンドを詳細解析中..."):
-            summary = f"表示データ数: {len(df_f)}件\n軸構成: X={x_axis}, Y={y_axis}, 色分け={color_axis}\nデータサンプル:\n{df_f.head(10).to_string()}"
+        with st.spinner("AI解析中..."):
+            summary = f"データ数: {len(df_f)}件\nX={x_axis}, Y={y_axis}, 色={color_axis}\nサンプル:\n{df_f.head(10).to_string()}"
             res = chat_for_insights(st.session_state['insight_messages'], summary, st.session_state['gemini_api_key'], llm_model)
             st.session_state['insight_messages'].append({"role": "assistant", "content": res})
             st.rerun()
 
     # Save Bookmark
     st.divider()
-    st.write("この統計表の分析状態を保存・報告できます。")
-    t_input = st.text_input("分析レシピのタイトル", value=f"分析: {datetime.datetime.now().strftime('%m/%d %H:%M')}")
+    t_input = st.text_input("保存タイトル", value=f"分析: {datetime.datetime.now().strftime('%m/%d %H:%M')}")
     col_s1, col_s2 = st.columns(2)
     current_cfg = {"chart_type": ct, "x_axis": x_axis, "y_axis": y_axis, "color_axis": color_axis}
-    if col_s1.button("💾 ブックマークに保存"):
+    if col_s1.button("💾 マイ・ブックマークに保存"):
         item = {
             "title": t_input, "table_id": st.session_state['selected_table_id_fixed'],
             "filter_params": st.session_state['filter_params'], "insight_messages": [], 
             "chart_config": current_cfg, "dimension_filters": filters, "timestamp": datetime.datetime.now().strftime("%m/%d %H:%M")
         }
         l = json.loads(localS.getItem("estat_my_bookmarks") or "[]")
-        l.append(item); localS.setItem("estat_my_bookmarks", json.dumps(l, ensure_ascii=False)); st.success("保存完了")
-    if col_s2.button("🌍 共有ギャラリーに送る"):
+        l.append(item); localS.setItem("estat_my_bookmarks", json.dumps(l, ensure_ascii=False))
+        st.success("保存完了しました。サイドバーを確認してください。")
+        st.rerun() # 即時更新のため
+    if col_s2.button("🌍 全体ギャラリーに共有"):
         item = {
             "title": t_input, "table_id": st.session_state['selected_table_id_fixed'],
             "filter_params": st.session_state['filter_params'], "insight_messages": [], 
             "chart_config": current_cfg, "dimension_filters": filters, "timestamp": datetime.datetime.now().strftime("%m/%d %H:%M")
         }
-        global_gallery.append(item); st.success("共有完了")
+        global_gallery.append(item); st.success("共有しました。")
+        st.rerun() # 即時更新のため
