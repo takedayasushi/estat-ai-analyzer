@@ -236,7 +236,11 @@ if not st.session_state.get('chat_mode', False):
         kw = st.text_input("キーワード (任意)")
         if st.button("統計表を検索"):
             res = search_stats_list(ESTAT_CATEGORIES[sc], st.session_state['estat_app_id'], kw)
-            if res: st.session_state['manual_tables'] = res
+            if res: 
+                st.session_state['manual_tables'] = res
+                st.info(f"✅ {len(res)} 件の統計表が見つかりました。下のリストから選択してください。")
+            else:
+                st.warning("該当する統計表が見つかりませんでした。条件を変えてお試しください。")
         if 'manual_tables' in st.session_state:
             # 安全なタイトル抽出による選択肢の生成
             opts = {}
