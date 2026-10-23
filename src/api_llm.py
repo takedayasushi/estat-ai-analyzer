@@ -1,8 +1,28 @@
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import json
 import re
 
-def chat_for_insights(messages: list, data_summary: str, api_key: str, model_name: str = "gemini-1.5-flash"):
+# google-generativeai (the old SDK) is deprecated; this module uses the
+# current google-genai SDK. A client is created per call with the caller's
+# own API key: no global configuration is shared between users, which
+# matters on Streamlit's shared server process.
+DEFAULT_MODEL = "gemini-2.5-flash"
+
+
+def _make_client(api_key: str):
+    return genai.Client(api_key=api_key)
+
+
+def _to_gemini_history(messages: list):
+    history = []
+    for m in messages[:-1]:
+        role = "user" if m["role"] == "user" else "model"
+        history.append(types.Content(role=role, parts=[types.Part(text=m["content"])]))
+    return history
+
+
+def chat_for_insights(messages: list, data_summary: str, api_key: str, model_name: str = DEFAULT_MODEL):
     """
     Interactive Q&A and insight generation using Google Gemini API.
     """
@@ -17,26 +37,21 @@ def chat_for_insights(messages: list, data_summary: str, api_key: str, model_nam
 【現在グラフ化されている実データの要約情報】
 {data_summary}
 """
-    
+
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=system_instruction
+        client = _make_client(api_key)
+        chat = client.chats.create(
+            model=model_name,
+            config=types.GenerateContentConfig(system_instruction=system_instruction),
+            history=_to_gemini_history(messages),
         )
-        
-        gemini_history = []
-        for m in messages[:-1]:
-            role = "user" if m["role"] == "user" else "model"
-            gemini_history.append({"role": role, "parts": [m["content"]]})
-            
-        chat = model.start_chat(history=gemini_history)
         response = chat.send_message(messages[-1]["content"])
         return response.text
     except Exception as e:
         return f"⚠️ 考察の生成中にエラーが発生しました。\n\n詳細エラー: {str(e)}"
 
-def chat_for_filtering(messages: list, meta_data_summary: str, api_key: str, model_name: str = "gemini-1.5-flash"):
+
+def chat_for_filtering(messages: list, meta_data_summary: str, api_key: str, model_name: str = DEFAULT_MODEL):
     """
     Chat with the user to narrow down e-Stat filter parameters before fetching large datasets.
     """
@@ -63,24 +78,17 @@ def chat_for_filtering(messages: list, meta_data_summary: str, api_key: str, mod
 """
 
     try:
-        genai.configure(api_key=api_key)
-        # Create model with system instructions
-        model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=system_instruction
+        client = _make_client(api_key)
+        chat = client.chats.create(
+            model=model_name,
+            config=types.GenerateContentConfig(system_instruction=system_instruction),
+            history=_to_gemini_history(messages),
         )
-        
-        # Convert Streamlit message format to Gemini format
-        gemini_history = []
-        for m in messages[:-1]:
-            role = "user" if m["role"] == "user" else "model"
-            gemini_history.append({"role": role, "parts": [m["content"]]})
-            
-        chat = model.start_chat(history=gemini_history)
         response = chat.send_message(messages[-1]["content"])
         return response.text
     except Exception as e:
         return f"⚠️ エラーが発生しました: {str(e)}"
+
 
 def extract_json_parameters(text: str):
     """
@@ -98,17 +106,18 @@ def extract_json_parameters(text: str):
         match_obj = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
         if match_obj:
             return json.loads(match_obj.group(1))
-    except:
+    except Exception:
         pass
     return None
 
-def generate_search_query(user_intent: str, categories_str: str, api_key: str, model_name: str = "gemini-1.5-flash"):
+
+def generate_search_query(user_intent: str, categories_str: str, api_key: str, model_name: str = DEFAULT_MODEL):
     """
     Translates natural language user intent into an e-Stat API search query (category and keyword).
     """
     if not api_key:
         return None
-    
+
     prompt = f"""
 あなたは日本の政府統計（e-Stat）の専門データアナリストアシスタントです。
 ユーザーの「知りたいこと（自然言語）」を分析し、e-StatのAPIを使って検索するための「大分類カテゴリ番号」と「検索キーワード」を推論してください。
@@ -141,21 +150,21 @@ e-Statの検索APIは「統計表タイトル・概要」との単純な文字�
 ```
 """
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(prompt)
+        client = _make_client(api_key)
+        response = client.models.generate_content(model=model_name, contents=prompt)
         return extract_json_parameters(response.text)
     except Exception as e:
         print(e)
         return None
 
-def recommend_tables_from_list(user_intent: str, tables: list, api_key: str, model_name: str = "gemini-1.5-flash"):
+
+def recommend_tables_from_list(user_intent: str, tables: list, api_key: str, model_name: str = DEFAULT_MODEL):
     """
     Takes a massive list of table dictionaries from e-Stat and uses Gemini to pick the top 3-5 best tables.
     """
     if not api_key or not tables:
         return []
-    
+
     # Token節約のため、最大50件に制限し、必要な情報だけ抽出する
     simplified_tables = []
     for t in tables[:50]:
@@ -165,7 +174,7 @@ def recommend_tables_from_list(user_intent: str, tables: list, api_key: str, mod
             "table_name": t.get('TABLE_NAME', {}).get('$', '') if isinstance(t.get('TABLE_NAME'), dict) else t.get('TABLE_NAME', ''),
             "survey_date": t.get('SURVEY_DATE', '')
         })
-        
+
     tables_json_str = json.dumps(simplified_tables, ensure_ascii=False)
 
     prompt = f"""
@@ -193,9 +202,8 @@ def recommend_tables_from_list(user_intent: str, tables: list, api_key: str, mod
 ```
 """
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(prompt)
+        client = _make_client(api_key)
+        response = client.models.generate_content(model=model_name, contents=prompt)
         return extract_json_parameters(response.text)
     except Exception as e:
         print(f"Error in recommend_tables: {e}")

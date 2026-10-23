@@ -9,14 +9,14 @@ import json
 import re
 import datetime
 import uuid
-import google.generativeai as genai
+from google import genai
 from src.api_estat import search_stats_list, get_meta_info, get_stats_data
 from src.data_processor import parse_estat_json_to_dataframe
 from src.api_llm import chat_for_insights, chat_for_filtering, extract_json_parameters, generate_search_query, recommend_tables_from_list
 from streamlit_local_storage import LocalStorage
 
 # --- Version Info ---
-APP_VERSION = "2026-04-19-1208"
+APP_VERSION = "2026-10-23-2134"
 
 # --- basic configurations ---
 st.set_page_config(page_title="📊 e-Stat AI Analyzer", layout="wide")
@@ -71,10 +71,12 @@ ESTAT_CATEGORIES = {
 def fetch_gemini_models(api_key):
     if not api_key: return []
     try:
-        genai.configure(api_key=api_key)
+        # Per-key client (google-genai SDK): no global configuration is
+        # shared between users of this Streamlit server process.
+        client = genai.Client(api_key=api_key)
         valid_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
+        for m in client.models.list():
+            if 'generateContent' in (getattr(m, 'supported_actions', None) or []):
                 name = m.name.replace("models/", "")
                 if re.search(r'gemini(-[0-9.]+)?-(pro|flash|ultra|lite)', name.lower()):
                     if not any(bad in name.lower() for bad in ['vision', 'exp', 'image', 'audio', 'video', 'embed']):
@@ -215,7 +217,7 @@ with st.sidebar.expander("⚙️ API設定"):
         st.session_state['estat_app_id'] = c_e; st.session_state['gemini_api_key'] = c_g; st.rerun()
 
 models = fetch_gemini_models(st.session_state['gemini_api_key'])
-llm_model = st.sidebar.selectbox("分析用AIモデル", models if models else ["gemini-1.5-flash"])
+llm_model = st.sidebar.selectbox("分析用AIモデル", models if models else ["gemini-2.5-flash"])
 
 st.sidebar.divider()
 is_admin = st.query_params.get("admin") == "true"
